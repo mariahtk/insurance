@@ -19,14 +19,13 @@ building_age_input = st.number_input("Approximate Building Age (years)", min_val
 num_floors_input = st.number_input("Total Floors (excl. basement)", min_value=0, max_value=100, value=0)
 
 st.markdown("---")
-st.subheader("📄 Upload Insurance Report PDF or Excel file")
+st.subheader("📄 Upload Insurance Report PDF file")
 
 pdf_file = st.file_uploader("Upload PDF", type=["pdf"])
-excel_file = st.file_uploader("Upload Excel Workbook", type=["xlsx"])
 
 DEFAULT_OCR = 0.20  # 20% fallback Occupancy Cost Ratio
 
-# --- Extraction functions from your original code ---
+# --- Extraction functions ---
 def extract_value_flexible(table, key_phrase, target_number_index=1):
     key_phrase = key_phrase.lower()
     for row in table:
@@ -88,61 +87,12 @@ def extract_from_pdf(pdf_file):
         rental = headline_rent * rentable_area
     return payroll, rental, turnover
 
-def extract_from_excel(excel_file):
-    payroll = None
-    rental = None
-    turnover = None
-    try:
-        xls = pd.ExcelFile(excel_file)
-        if "Owned Summary" in xls.sheet_names:
-            df = pd.read_excel(xls, sheet_name="Owned Summary")
-            df.columns = df.columns.astype(str)
-            df_lower = df.applymap(lambda x: str(x).lower() if isinstance(x, str) else x)
-
-            staff_row_idx = df_lower.index[df_lower.apply(lambda row: row.astype(str).str.contains("staff costs").any(), axis=1)]
-            if len(staff_row_idx) > 0:
-                try:
-                    payroll = float(df.iloc[staff_row_idx[0], 1])
-                except:
-                    payroll = None
-
-            gross_rev_idx = df_lower.index[df_lower.apply(lambda row: row.astype(str).str.contains("gross revenue").any(), axis=1)]
-            if len(gross_rev_idx) > 0:
-                try:
-                    turnover = float(df.iloc[gross_rev_idx[0], 1])
-                except:
-                    turnover = None
-
-            headline_rent = None
-            rentable_area = None
-            for idx, row in df_lower.iterrows():
-                for col_idx, val in enumerate(row):
-                    if isinstance(val, str) and "headline rent (as reviewed by partner)" in val:
-                        try:
-                            headline_rent = float(df.iloc[idx, col_idx + 1])
-                        except:
-                            headline_rent = None
-                    if isinstance(val, str) and "rentable area sqft" in val:
-                        try:
-                            rentable_area = float(df.iloc[idx, col_idx + 1])
-                        except:
-                            rentable_area = None
-            if headline_rent is not None and rentable_area is not None:
-                rental = headline_rent * rentable_area
-
-    except Exception as e:
-        st.error(f"Error reading Excel file: {e}")
-
-    return payroll, rental, turnover
-
-if excel_file is not None:
-    extracted_payroll, extracted_rental, extracted_turnover = extract_from_excel(excel_file)
-elif pdf_file is not None:
+if pdf_file is not None:
     extracted_payroll, extracted_rental, extracted_turnover = extract_from_pdf(pdf_file)
 else:
     extracted_payroll, extracted_rental, extracted_turnover = None, None, None
 
-if excel_file or pdf_file:
+if pdf_file:
     st.markdown("### Extracted values from uploaded file:")
     st.write(f"**Estimated Annual Payroll:** {extracted_payroll if extracted_payroll is not None else 'Not found'}")
     st.write(f"**Rental (Budget/Estimate - Next Year):** {extracted_rental if extracted_rental is not None else 'Not found'}")
@@ -209,11 +159,11 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
     lat, lon = geocode_address(address)
     osm_floors = get_building_floors_osm(lat, lon)
 
-    # Multi-tenanted logic (basic heuristic)
+    # Multi-tenanted logic: treat "Unknown" as "Yes" by default
     if multi_tenanted_input != "Unknown":
         multi_tenanted = multi_tenanted_input
     else:
-        multi_tenanted = "Yes" if sqft > 10000 else "No"
+        multi_tenanted = "Yes"
 
     # Building age: manual override else random fallback
     if building_age_input > 0:
