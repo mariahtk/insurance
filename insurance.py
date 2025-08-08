@@ -31,27 +31,15 @@ def extract_year4_value_flexible(table, key_phrase, target_number_index=4):
                     return None
     return None
 
-def find_year4_column_index(table):
+def extract_number_next_to_phrase(table, phrase):
+    phrase = phrase.lower()
     for row in table:
         for idx, cell in enumerate(row):
-            if cell and "year 4" in cell.lower():
-                return idx
-    return 4
-
-def extract_rental_from_section(table):
-    year4_idx = find_year4_column_index(table)
-    in_section = False
-    for row in table:
-        row_text = " ".join(cell.lower() if cell else "" for cell in row)
-        if "comparison to conventional rent deal" in row_text:
-            in_section = True
-            continue
-        if in_section:
-            if "market rent" in row_text:
-                if len(row) > year4_idx:
-                    val_str = row[year4_idx]
+            if cell and phrase in cell.lower():
+                if idx + 1 < len(row):
+                    val_str = row[idx + 1]
                     if val_str:
-                        val_clean = re.sub(r"[^0-9.\-]", "", val_str)
+                        val_clean = re.sub(r"[^0-9.\-]", "", val_str.replace(',', ''))
                         try:
                             return float(val_clean)
                         except:
@@ -65,14 +53,26 @@ if pdf_file is not None:
             tables = page.extract_tables()
             if tables:
                 all_tables.extend(tables)
-        
+
         for table in all_tables:
             if extracted_payroll is None:
                 extracted_payroll = extract_year4_value_flexible(table, "staff costs")
-            if extracted_rental is None:
-                extracted_rental = extract_rental_from_section(table)
             if extracted_turnover is None:
                 extracted_turnover = extract_year4_value_flexible(table, "gross revenue")
+
+        # Extract headline rent and rentable area and calculate rental
+        headline_rent = None
+        rentable_area = None
+        for table in all_tables:
+            if headline_rent is None:
+                headline_rent = extract_number_next_to_phrase(table, "headline rent (as reviewed by partner) usd psft p.a.")
+            if rentable_area is None:
+                rentable_area = extract_number_next_to_phrase(table, "rentable area sqft")
+        
+        if headline_rent is not None and rentable_area is not None:
+            extracted_rental = headline_rent * rentable_area
+        else:
+            extracted_rental = None
 
 if pdf_file:
     st.markdown("### Extracted values from PDF:")
