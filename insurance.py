@@ -23,7 +23,7 @@ extracted_turnover = None
 
 DEFAULT_OCR = 0.20  # 20% fallback Occupancy Cost Ratio
 
-def extract_year4_value_flexible(table, key_phrase, target_number_index=4):
+def extract_year_value_flexible(table, key_phrase, target_number_index=1):  # Changed to year 1 = index 1
     key_phrase = key_phrase.lower()
     for row in table:
         row_text = " ".join(str(cell).lower() if cell else "" for cell in row)
@@ -64,9 +64,11 @@ def extract_from_pdf(pdf_file):
                 all_tables.extend(tables)
         for table in all_tables:
             if payroll is None:
-                payroll = extract_year4_value_flexible(table, "staff costs")
+                raw_payroll = extract_year_value_flexible(table, "staff costs")  # year 1 column
+                if raw_payroll is not None:
+                    payroll = raw_payroll * 1000  # add 3 zeros
             if turnover is None:
-                turnover = extract_year4_value_flexible(table, "gross revenue")
+                turnover = extract_year_value_flexible(table, "gross revenue")  # year 1 column
         for table in all_tables:
             if headline_rent is None:
                 headline_rent = extract_number_next_to_phrase(table, "headline rent (as reviewed by partner) usd psft p.a.")
@@ -90,19 +92,19 @@ def extract_from_excel(excel_file):
             # Lowercase all strings in DataFrame for searching
             df_lower = df.applymap(lambda x: str(x).lower() if isinstance(x, str) else x)
 
-            # Find 'Staff Costs' row and get year 4 value (assumed 5th column)
+            # Find 'Staff Costs' row and get year 1 value (index 1)
             staff_row_idx = df_lower.index[df_lower.apply(lambda row: row.astype(str).str.contains("staff costs").any(), axis=1)]
             if len(staff_row_idx) > 0:
                 try:
-                    payroll = float(df.iloc[staff_row_idx[0], 4])
+                    payroll = float(df.iloc[staff_row_idx[0], 1])  # year 1 column
                 except:
                     payroll = None
 
-            # Find 'Gross Revenue' row and get year 4 value
+            # Find 'Gross Revenue' row and get year 1 value
             gross_rev_idx = df_lower.index[df_lower.apply(lambda row: row.astype(str).str.contains("gross revenue").any(), axis=1)]
             if len(gross_rev_idx) > 0:
                 try:
-                    turnover = float(df.iloc[gross_rev_idx[0], 4])
+                    turnover = float(df.iloc[gross_rev_idx[0], 1])  # year 1 column
                 except:
                     turnover = None
 
@@ -133,6 +135,8 @@ if excel_file is not None:
     extracted_payroll, extracted_rental, extracted_turnover = extract_from_excel(excel_file)
 elif pdf_file is not None:
     extracted_payroll, extracted_rental, extracted_turnover = extract_from_pdf(pdf_file)
+else:
+    extracted_payroll, extracted_rental, extracted_turnover = None, None, None
 
 if excel_file or pdf_file:
     st.markdown("### Extracted values from uploaded file:")
@@ -151,23 +155,30 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
     building_age = random.randint(20, 50)
     num_floors = max(1, int(sqft // 10000))
 
-    if sqft < 10000:
-        fte = 0.5
-        payroll = 50000
-    elif sqft < 15000:
-        fte = 1.0
-        payroll = 65000
-    elif sqft < 20000:
-        fte = 1.5
-        payroll = 110000
+    # Only use embedded payroll if no extracted payroll found
+    if extracted_payroll is None:
+        if sqft < 10000:
+            fte = 0.5
+            payroll = 50000
+        elif sqft < 15000:
+            fte = 1.0
+            payroll = 65000
+        elif sqft < 20000:
+            fte = 1.5
+            payroll = 110000
+        else:
+            fte = 2.0
+            payroll = 110000
     else:
-        fte = 2.0
-        payroll = 110000
+        payroll = extracted_payroll
+        # Estimate FTE from payroll roughly (optional, or keep as None)
+        fte = None
 
     # Use extracted rental if available, else fallback to sqft * market_rent input
     rental_estimate = extracted_rental if extracted_rental is not None else sqft * market_rent
 
     # Annual turnover with fallback to OCR logic
+    DEFAULT_OCR = 0.20
     if extracted_turnover is not None:
         annual_turnover = extracted_turnover
     elif rental_estimate is not None and rental_estimate > 0:
@@ -186,13 +197,17 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
     st.write(f"**Total Floors (excl. basement):** {num_floors}")
 
     st.subheader("👥 Employment Estimate")
-    st.write(f"**Estimated FTEs:** {fte}")
-    st.write(f"**Estimated Annual Payroll:** {currency} {payroll:,.2f}")
+    if extracted_payroll is not None:
+        st.write(f"**Estimated Annual Payroll (from file):** {currency} {payroll:,.2f}")
+        if fte is not None:
+            st.write(f"**Estimated FTEs:** {fte}")
+    else:
+        st.write(f"**Estimated FTEs:** {fte}")
+        st.write(f"**Estimated Annual Payroll:** {currency} {payroll:,.2f}")
 
     st.subheader("📊 Forecasted Financials")
 
     if any([extracted_payroll, extracted_rental, extracted_turnover]):
-        st.write(f"**Estimated Annual Payroll (from file):** {currency} {extracted_payroll if extracted_payroll is not None else 'N/A':,.2f}")
         st.write(f"**Rental (Budget/Estimate - Next Year) (from file or input):** {currency} {rental_estimate:,.2f}")
         st.write(f"**Annual Turnover (Forecast):** {currency} {annual_turnover:,.2f}" if annual_turnover else "Annual Turnover: N/A")
         if gross_profit is not None:
@@ -208,3 +223,4 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
 
 else:
     st.info("Please fill in all fields to generate the report.")
+
