@@ -18,13 +18,9 @@ extracted_payroll = None
 extracted_rental = None
 extracted_turnover = None
 
+DEFAULT_OCR = 0.20  # 20% fallback Occupancy Cost Ratio
+
 def extract_year4_value_flexible(table, key_phrase, target_number_index=4):
-    """
-    Finds a row containing key_phrase anywhere in the row,
-    extracts all numbers in that row,
-    returns the number at target_number_index (0-based),
-    or None if not found.
-    """
     key_phrase = key_phrase.lower()
     for row in table:
         row_text = " ".join(cell.lower() if cell else "" for cell in row)
@@ -38,9 +34,6 @@ def extract_year4_value_flexible(table, key_phrase, target_number_index=4):
     return None
 
 def extract_number_next_to_phrase(table, phrase):
-    """
-    Finds the row containing phrase, returns the number found in the next cell to the right.
-    """
     phrase = phrase.lower()
     for row in table:
         for idx, cell in enumerate(row):
@@ -73,9 +66,15 @@ if pdf_file is not None:
         rentable_area = None
         for table in all_tables:
             if headline_rent is None:
-                headline_rent = extract_number_next_to_phrase(table, "headline rent (as reviewed by partner) usd psft p.a.")
+                headline_rent = extract_number_next_to_phrase(
+                    table,
+                    "headline rent (as reviewed by partner) usd psft p.a."
+                )
             if rentable_area is None:
-                rentable_area = extract_number_next_to_phrase(table, "rentable area sqft")
+                rentable_area = extract_number_next_to_phrase(
+                    table,
+                    "rentable area sqft"
+                )
 
         if headline_rent is not None and rentable_area is not None:
             extracted_rental = headline_rent * rentable_area
@@ -112,10 +111,20 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
         fte = 2.0
         payroll = 110000
 
-    # Use extracted rental if available, else fallback to sqft * market_rent input
+    # --- RENTAL ESTIMATE FALLBACK ---
     rental_estimate = extracted_rental if extracted_rental is not None else sqft * market_rent
-    annual_turnover = rental_estimate * 2
-    gross_profit_calc = annual_turnover - rental_estimate
+
+    # --- ANNUAL TURNOVER FALLBACK ---
+    if extracted_turnover is not None:
+        annual_turnover = extracted_turnover
+    elif rental_estimate is not None and rental_estimate > 0:
+        annual_turnover = rental_estimate / DEFAULT_OCR
+    else:
+        annual_turnover = (sqft * market_rent) / DEFAULT_OCR if sqft > 0 and market_rent > 0 else None
+
+    gross_profit_calc = None
+    if annual_turnover is not None and rental_estimate is not None:
+        gross_profit_calc = annual_turnover - rental_estimate
 
     st.subheader("🏗️ Building Information")
     st.write(f"**Address:** {address}")
@@ -132,15 +141,17 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
     if any([extracted_payroll, extracted_rental, extracted_turnover]):
         st.write(f"**Estimated Annual Payroll (from PDF):** {currency} {extracted_payroll if extracted_payroll is not None else 'N/A':,.2f}")
         st.write(f"**Rental (Budget/Estimate - Next Year) (from PDF or input):** {currency} {rental_estimate:,.2f}")
-        st.write(f"**Annual Turnover (Forecast) (from PDF):** {currency} {extracted_turnover if extracted_turnover is not None else 'N/A':,.2f}")
+        st.write(f"**Annual Turnover (Forecast):** {currency} {annual_turnover:,.2f}" if annual_turnover else "Annual Turnover: N/A")
         if gross_profit is not None:
             st.write(f"**Annual Gross Profit (calculated from PDF):** {currency} {gross_profit:,.2f}")
+        elif gross_profit_calc is not None:
+            st.write(f"**Annual Gross Profit (calculated):** {currency} {gross_profit_calc:,.2f}")
         else:
-            st.write("**Annual Gross Profit:** Unable to calculate from PDF data")
+            st.write("**Annual Gross Profit:** Unable to calculate")
     else:
         st.write(f"**3.5 Rental (Budget/Estimate - Next Year):** {currency} {rental_estimate:,.2f}")
-        st.write(f"**3.3 Annual Turnover (Forecast):** {currency} {annual_turnover:,.2f}")
-        st.write(f"**3.4 Annual Gross Profit:** {currency} {gross_profit_calc:,.2f}")
+        st.write(f"**3.3 Annual Turnover (Forecast):** {currency} {annual_turnover:,.2f}" if annual_turnover else "Annual Turnover: N/A")
+        st.write(f"**3.4 Annual Gross Profit:** {currency} {gross_profit_calc:,.2f}" if gross_profit_calc else "Gross Profit: N/A")
 
 else:
     st.info("Please fill in all fields to generate the report.")
