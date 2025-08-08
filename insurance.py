@@ -66,11 +66,11 @@ def extract_from_pdf(pdf_file):
 
         for table in all_tables:
             if payroll is None:
-                raw_payroll = extract_value_flexible(table, "Staff Costs", target_col_index=2)  # Year 2
+                raw_payroll = extract_value_flexible(table, "staff costs", target_col_index=2)  # Year 2
                 if raw_payroll is not None:
                     payroll = raw_payroll * 1000  # multiply by 1000
             if turnover is None:
-                raw_turnover = extract_value_flexible(table, "Gross Revenue", target_col_index=2)  # Year 2
+                raw_turnover = extract_value_flexible(table, "gross revenue", target_col_index=2)  # Year 2
                 if raw_turnover is not None:
                     turnover = raw_turnover * 1000  # multiply by 1000
 
