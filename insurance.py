@@ -54,28 +54,46 @@ def extract_number_next_to_phrase(table, phrase):
                             return None
     return None
 
-def extract_staff_cost_below_row(table, key_phrase, target_number_index=3):
+def find_year_column_index(table, year_label="Year 3"):
     """
-    Finds the row containing key_phrase (case insensitive),
-    then extracts the number at target_number_index from the **next row** (row+1),
-    returns None if not found or next row does not exist.
+    Find index of the column header containing year_label (case insensitive).
+    Returns column index or None if not found.
     """
-    key_phrase = key_phrase.lower()
+    year_label = year_label.lower()
+    for row in table:
+        for idx, cell in enumerate(row):
+            if cell and year_label in str(cell).lower():
+                return idx
+    return None
+
+def extract_staff_cost_from_table(table):
+    """
+    Extract staff cost value by checking the row below 'Staff Costs',
+    fallback to 'Staff Costs' row, then the row below that (2 rows down).
+    """
+    year3_col = find_year_column_index(table, "Year 3")
+    if year3_col is None:
+        return None
+
+    staff_row_index = None
     for i, row in enumerate(table):
-        row_text = " ".join(str(cell).lower() if cell else "" for cell in row)
-        if key_phrase in row_text:
-            # check if next row exists
-            if i + 1 < len(table):
-                next_row = table[i + 1]
-                if len(next_row) > target_number_index:
-                    val_str = next_row[target_number_index]
-                    if val_str:
-                        val_clean = re.sub(r"[^0-9.\-]", "", str(val_str).replace(',', ''))
-                        try:
-                            return float(val_clean)
-                        except:
-                            return None
-            return None
+        if any(cell and "staff costs" in str(cell).lower() for cell in row):
+            staff_row_index = i
+            break
+
+    if staff_row_index is None:
+        return None
+
+    # Try row below staff costs, fallback current row, then two rows below
+    for offset in [1, 0, 2]:
+        row_idx = staff_row_index + offset
+        if 0 <= row_idx < len(table):
+            val = table[row_idx][year3_col]
+            if val and (isinstance(val, (int, float)) or (isinstance(val, str) and val.strip() != "")):
+                try:
+                    return float(str(val).replace(',', '').strip())
+                except:
+                    continue
     return None
 
 def extract_from_pdf(pdf_file):
@@ -90,16 +108,17 @@ def extract_from_pdf(pdf_file):
             if tables:
                 all_tables.extend(tables)
 
-        # Extract payroll from the row BELOW "staff costs", year 3 (index 3)
         for table in all_tables:
             if payroll is None:
-                raw_payroll = extract_staff_cost_below_row(table, "staff costs", target_number_index=3)  # Year 3 col
+                raw_payroll = extract_staff_cost_from_table(table)
                 if raw_payroll is not None:
                     payroll = raw_payroll * 1000  # multiply by 1000
+
             if turnover is None:
-                raw_turnover = extract_value_flexible(table, "gross revenue", target_number_index=1)  # Year 1 col
+                # Use existing flexible extraction for Year 1 gross revenue
+                raw_turnover = extract_value_flexible(table, "gross revenue", target_number_index=1)
                 if raw_turnover is not None:
-                    turnover = raw_turnover * 1000  # multiply by 1000
+                    turnover = raw_turnover * 1000
 
         for table in all_tables:
             if headline_rent is None:
