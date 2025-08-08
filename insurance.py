@@ -2,6 +2,7 @@ import streamlit as st
 import random
 import pdfplumber
 import re
+import pandas as pd
 
 st.title("🏢 Insurance Report Generator")
 
@@ -11,8 +12,10 @@ sqft = st.number_input("📐 Building Square Footage", min_value=0.0, value=0.0)
 market_rent = st.number_input(f"💰 Market Rent ({currency} / sqft)", min_value=0.0, value=0.0)
 
 st.markdown("---")
-st.subheader("📄 Upload PDF to auto-extract values")
-pdf_file = st.file_uploader("Upload Insurance Report PDF", type=["pdf"])
+st.subheader("📄 Upload Insurance Report PDF or Excel file")
+
+pdf_file = st.file_uploader("Upload PDF", type=["pdf"])
+excel_file = st.file_uploader("Upload Excel Workbook", type=["xlsx"])
 
 extracted_payroll = None
 extracted_rental = None
@@ -23,7 +26,7 @@ DEFAULT_OCR = 0.20  # 20% fallback Occupancy Cost Ratio
 def extract_year4_value_flexible(table, key_phrase, target_number_index=4):
     key_phrase = key_phrase.lower()
     for row in table:
-        row_text = " ".join(cell.lower() if cell else "" for cell in row)
+        row_text = " ".join(str(cell).lower() if cell else "" for cell in row)
         if key_phrase in row_text:
             numbers_str = re.findall(r"[-+]?\d*\.\d+|\d+", row_text.replace(',', ''))
             if len(numbers_str) > target_number_index:
@@ -37,52 +40,102 @@ def extract_number_next_to_phrase(table, phrase):
     phrase = phrase.lower()
     for row in table:
         for idx, cell in enumerate(row):
-            if cell and phrase in cell.lower():
+            if cell and phrase in str(cell).lower():
                 if idx + 1 < len(row):
                     val_str = row[idx + 1]
                     if val_str:
-                        val_clean = re.sub(r"[^0-9.\-]", "", val_str.replace(',', ''))
+                        val_clean = re.sub(r"[^0-9.\-]", "", str(val_str).replace(',', ''))
                         try:
                             return float(val_clean)
                         except:
                             return None
     return None
 
-if pdf_file is not None:
+def extract_from_pdf(pdf_file):
+    payroll = None
+    turnover = None
+    headline_rent = None
+    rentable_area = None
     with pdfplumber.open(pdf_file) as pdf:
         all_tables = []
         for page in pdf.pages:
             tables = page.extract_tables()
             if tables:
                 all_tables.extend(tables)
-
         for table in all_tables:
-            if extracted_payroll is None:
-                extracted_payroll = extract_year4_value_flexible(table, "staff costs")
-            if extracted_turnover is None:
-                extracted_turnover = extract_year4_value_flexible(table, "gross revenue")
-
-        headline_rent = None
-        rentable_area = None
+            if payroll is None:
+                payroll = extract_year4_value_flexible(table, "staff costs")
+            if turnover is None:
+                turnover = extract_year4_value_flexible(table, "gross revenue")
         for table in all_tables:
             if headline_rent is None:
-                headline_rent = extract_number_next_to_phrase(
-                    table,
-                    "headline rent (as reviewed by partner) usd psft p.a."
-                )
+                headline_rent = extract_number_next_to_phrase(table, "headline rent (as reviewed by partner) usd psft p.a.")
             if rentable_area is None:
-                rentable_area = extract_number_next_to_phrase(
-                    table,
-                    "rentable area sqft"
-                )
+                rentable_area = extract_number_next_to_phrase(table, "rentable area sqft")
+    rental = None
+    if headline_rent is not None and rentable_area is not None:
+        rental = headline_rent * rentable_area
+    return payroll, rental, turnover
 
-        if headline_rent is not None and rentable_area is not None:
-            extracted_rental = headline_rent * rentable_area
-        else:
-            extracted_rental = None
+def extract_from_excel(excel_file):
+    payroll = None
+    rental = None
+    turnover = None
+    try:
+        xls = pd.ExcelFile(excel_file)
+        if "Owned Summary" in xls.sheet_names:
+            df = pd.read_excel(xls, sheet_name="Owned Summary")
+            # Normalize columns to strings
+            df.columns = df.columns.astype(str)
+            # Lowercase all strings in DataFrame for searching
+            df_lower = df.applymap(lambda x: str(x).lower() if isinstance(x, str) else x)
 
-if pdf_file:
-    st.markdown("### Extracted values from PDF:")
+            # Find 'Staff Costs' row and get year 4 value (assumed 5th column)
+            staff_row_idx = df_lower.index[df_lower.apply(lambda row: row.astype(str).str.contains("staff costs").any(), axis=1)]
+            if len(staff_row_idx) > 0:
+                try:
+                    payroll = float(df.iloc[staff_row_idx[0], 4])
+                except:
+                    payroll = None
+
+            # Find 'Gross Revenue' row and get year 4 value
+            gross_rev_idx = df_lower.index[df_lower.apply(lambda row: row.astype(str).str.contains("gross revenue").any(), axis=1)]
+            if len(gross_rev_idx) > 0:
+                try:
+                    turnover = float(df.iloc[gross_rev_idx[0], 4])
+                except:
+                    turnover = None
+
+            # Find 'Headline Rent (as reviewed by partner) USD psft p.a.' and 'Rentable Area sqft'
+            headline_rent = None
+            rentable_area = None
+            for idx, row in df_lower.iterrows():
+                for col_idx, val in enumerate(row):
+                    if isinstance(val, str) and "headline rent (as reviewed by partner)" in val:
+                        try:
+                            headline_rent = float(df.iloc[idx, col_idx + 1])
+                        except:
+                            headline_rent = None
+                    if isinstance(val, str) and "rentable area sqft" in val:
+                        try:
+                            rentable_area = float(df.iloc[idx, col_idx + 1])
+                        except:
+                            rentable_area = None
+            if headline_rent is not None and rentable_area is not None:
+                rental = headline_rent * rentable_area
+
+    except Exception as e:
+        st.error(f"Error reading Excel file: {e}")
+
+    return payroll, rental, turnover
+
+if excel_file is not None:
+    extracted_payroll, extracted_rental, extracted_turnover = extract_from_excel(excel_file)
+elif pdf_file is not None:
+    extracted_payroll, extracted_rental, extracted_turnover = extract_from_pdf(pdf_file)
+
+if excel_file or pdf_file:
+    st.markdown("### Extracted values from uploaded file:")
     st.write(f"**Estimated Annual Payroll:** {extracted_payroll if extracted_payroll is not None else 'Not found'}")
     st.write(f"**Rental (Budget/Estimate - Next Year):** {extracted_rental if extracted_rental is not None else 'Not found'}")
     st.write(f"**Annual Turnover (Forecast):** {extracted_turnover if extracted_turnover is not None else 'Not found'}")
@@ -111,10 +164,10 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
         fte = 2.0
         payroll = 110000
 
-    # --- RENTAL ESTIMATE FALLBACK ---
+    # Use extracted rental if available, else fallback to sqft * market_rent input
     rental_estimate = extracted_rental if extracted_rental is not None else sqft * market_rent
 
-    # --- ANNUAL TURNOVER FALLBACK ---
+    # Annual turnover with fallback to OCR logic
     if extracted_turnover is not None:
         annual_turnover = extracted_turnover
     elif rental_estimate is not None and rental_estimate > 0:
@@ -139,11 +192,11 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
     st.subheader("📊 Forecasted Financials")
 
     if any([extracted_payroll, extracted_rental, extracted_turnover]):
-        st.write(f"**Estimated Annual Payroll (from PDF):** {currency} {extracted_payroll if extracted_payroll is not None else 'N/A':,.2f}")
-        st.write(f"**Rental (Budget/Estimate - Next Year) (from PDF or input):** {currency} {rental_estimate:,.2f}")
+        st.write(f"**Estimated Annual Payroll (from file):** {currency} {extracted_payroll if extracted_payroll is not None else 'N/A':,.2f}")
+        st.write(f"**Rental (Budget/Estimate - Next Year) (from file or input):** {currency} {rental_estimate:,.2f}")
         st.write(f"**Annual Turnover (Forecast):** {currency} {annual_turnover:,.2f}" if annual_turnover else "Annual Turnover: N/A")
         if gross_profit is not None:
-            st.write(f"**Annual Gross Profit (calculated from PDF):** {currency} {gross_profit:,.2f}")
+            st.write(f"**Annual Gross Profit (calculated from file):** {currency} {gross_profit:,.2f}")
         elif gross_profit_calc is not None:
             st.write(f"**Annual Gross Profit (calculated):** {currency} {gross_profit_calc:,.2f}")
         else:
