@@ -2,3 +2,4 @@ streamlit
 pandas
 openpyxl     # for Excel export
 reportlab    # for PDF generation
+pdfplumber
