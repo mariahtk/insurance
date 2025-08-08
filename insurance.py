@@ -8,10 +8,10 @@ import time
 
 st.title("🏢 Insurance Report Generator")
 
-address = st.text_input(" Building Address")
-currency = st.selectbox(" Currency", ["CAD", "USD"])
-sqft = st.number_input(" Building Square Footage", min_value=0.0, value=0.0)
-market_rent = st.number_input(f" Market Rent ({currency} / sqft)", min_value=0.0, value=0.0)
+address = st.text_input("📍 Building Address")
+currency = st.selectbox("💱 Currency", ["CAD", "USD"])
+sqft = st.number_input("📐 Building Square Footage", min_value=0.0, value=0.0)
+market_rent = st.number_input(f"💰 Market Rent ({currency} / sqft)", min_value=0.0, value=0.0)
 
 st.markdown("---")
 st.subheader("📄 Upload Insurance Report PDF or Excel file")
@@ -24,14 +24,11 @@ extracted_rental = None
 extracted_turnover = None
 
 DEFAULT_OCR = 0.20  # 20% fallback Occupancy Cost Ratio
-USER_AGENT = "InsuranceReportApp/1.0 (mtkrawchuk@gmail.com)"  # Replace with your email/contact
-CURRENT_YEAR = 2025  # Update this as needed
+USER_AGENT = "InsuranceReportApp/1.0 (your-email@example.com)"  # Replace with your email/contact
+CURRENT_YEAR = 2025  # Update as needed
 
 
 def extract_value_flexible(table, key_phrase, target_number_index=1):
-    """
-    Extracts number from row containing key_phrase at target_number_index column (0-based).
-    """
     key_phrase = key_phrase.lower()
     for row in table:
         row_text = " ".join(str(cell).lower() if cell else "" for cell in row)
@@ -73,16 +70,15 @@ def extract_from_pdf(pdf_file):
             if tables:
                 all_tables.extend(tables)
 
-        # Extract payroll from Year 3 (index 3), gross revenue from Year 1 (index 1)
         for table in all_tables:
             if payroll is None:
-                raw_payroll = extract_value_flexible(table, "staff costs", target_number_index=3)  # Year 3 col
+                raw_payroll = extract_value_flexible(table, "staff costs", target_number_index=3)
                 if raw_payroll is not None:
-                    payroll = raw_payroll * 1000  # multiply by 1000
+                    payroll = raw_payroll * 1000
             if turnover is None:
-                raw_turnover = extract_value_flexible(table, "gross revenue", target_number_index=1)  # Year 1 col
+                raw_turnover = extract_value_flexible(table, "gross revenue", target_number_index=1)
                 if raw_turnover is not None:
-                    turnover = raw_turnover * 1000  # multiply by 1000
+                    turnover = raw_turnover * 1000
 
         for table in all_tables:
             if headline_rent is None:
@@ -107,7 +103,6 @@ def extract_from_excel(excel_file):
             df.columns = df.columns.astype(str)
             df_lower = df.applymap(lambda x: str(x).lower() if isinstance(x, str) else x)
 
-            # Staff costs from Year 1 (index 1)
             staff_row_idx = df_lower.index[df_lower.apply(lambda row: row.astype(str).str.contains("staff costs").any(), axis=1)]
             if len(staff_row_idx) > 0:
                 try:
@@ -115,7 +110,6 @@ def extract_from_excel(excel_file):
                 except:
                     payroll = None
 
-            # Gross revenue from Year 1 (index 1)
             gross_rev_idx = df_lower.index[df_lower.apply(lambda row: row.astype(str).str.contains("gross revenue").any(), axis=1)]
             if len(gross_rev_idx) > 0:
                 try:
@@ -148,14 +142,8 @@ def extract_from_excel(excel_file):
 
 def geocode_address(address):
     url = "https://nominatim.openstreetmap.org/search"
-    params = {
-        "q": address,
-        "format": "json",
-        "limit": 1,
-    }
-    headers = {
-        "User-Agent": USER_AGENT
-    }
+    params = {"q": address, "format": "json", "limit": 1}
+    headers = {"User-Agent": USER_AGENT}
     response = requests.get(url, params=params, headers=headers)
     if response.status_code != 200:
         st.error("Error during geocoding address.")
@@ -178,21 +166,35 @@ def get_building_info(lat, lon):
     );
     out tags;
     """
-    headers = {
-        "User-Agent": USER_AGENT
-    }
+    headers = {"User-Agent": USER_AGENT}
     response = requests.get(overpass_url, params={"data": query}, headers=headers)
     if response.status_code != 200:
         st.error("Error querying building data.")
-        return None, None
+        return None, None, None
     data = response.json()
     elements = data.get("elements", [])
     if not elements:
-        return None, None
+        return None, None, None
     tags = elements[0].get("tags", {})
     floors = tags.get("building:levels")
     year_built = tags.get("start_date") or tags.get("year_built")
-    return floors, year_built
+
+    # Multi-tenancy guess from tags
+    multi_tenanted = None
+    building_use = tags.get("building:use", "").lower()
+    units = tags.get("building:units")
+    if building_use in ["commercial", "mixed_use", "retail", "office"]:
+        multi_tenanted = "Yes"
+    elif units:
+        try:
+            if int(units) > 1:
+                multi_tenanted = "Yes"
+            else:
+                multi_tenanted = "No"
+        except:
+            multi_tenanted = None
+
+    return floors, year_built, multi_tenanted
 
 
 if excel_file is not None:
@@ -210,12 +212,10 @@ if excel_file or pdf_file:
 
 if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
 
-    # Try to get building info from OSM
     lat, lon = geocode_address(address)
     if lat is not None and lon is not None:
-        # Polite pause to avoid hammering free APIs
-        time.sleep(1)
-        floors, year_built = get_building_info(lat, lon)
+        time.sleep(1)  # Polite pause
+        floors, year_built, multi_tenanted_api = get_building_info(lat, lon)
         try:
             num_floors = int(floors) if floors is not None else max(1, int(sqft // 10000))
         except:
@@ -226,13 +226,18 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
                 building_age = random.randint(20, 50)
         except:
             building_age = random.randint(20, 50)
+
+        if multi_tenanted_api is not None:
+            multi_tenanted = multi_tenanted_api
+        else:
+            multi_tenanted = "Yes" if sqft > 10000 else "No"
+
     else:
         num_floors = max(1, int(sqft // 10000))
         building_age = random.randint(20, 50)
+        multi_tenanted = "Yes" if sqft > 10000 else "No"
 
-    multi_tenanted = "Yes" if sqft > 10000 else "No"
-
-    # Use embedded payroll only if no extracted payroll found
+    # Payroll and FTE
     if extracted_payroll is None:
         if sqft < 10000:
             fte = 0.5
@@ -248,11 +253,10 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
             payroll = 110000
     else:
         payroll = extracted_payroll
-        fte = None  # Optionally estimate FTE from payroll if desired
+        fte = None
 
     rental_estimate = extracted_rental if extracted_rental is not None else sqft * market_rent
 
-    # Annual turnover with fallback to OCR logic
     if extracted_turnover is not None:
         annual_turnover = extracted_turnover
     elif rental_estimate is not None and rental_estimate > 0:
