@@ -54,48 +54,6 @@ def extract_number_next_to_phrase(table, phrase):
                             return None
     return None
 
-def find_year_column_index(table, year_label="Year 3"):
-    """
-    Find index of the column header containing year_label (case insensitive).
-    Returns column index or None if not found.
-    """
-    year_label = year_label.lower()
-    for row in table:
-        for idx, cell in enumerate(row):
-            if cell and year_label in str(cell).lower():
-                return idx
-    return None
-
-def extract_staff_cost_from_table(table):
-    """
-    Extract staff cost value by checking the row below 'Staff Costs',
-    fallback to 'Staff Costs' row, then the row below that (2 rows down).
-    """
-    year3_col = find_year_column_index(table, "Year 3")
-    if year3_col is None:
-        return None
-
-    staff_row_index = None
-    for i, row in enumerate(table):
-        if any(cell and "staff costs" in str(cell).lower() for cell in row):
-            staff_row_index = i
-            break
-
-    if staff_row_index is None:
-        return None
-
-    # Try row below staff costs, fallback current row, then two rows below
-    for offset in [1, 0, 2]:
-        row_idx = staff_row_index + offset
-        if 0 <= row_idx < len(table):
-            val = table[row_idx][year3_col]
-            if val and (isinstance(val, (int, float)) or (isinstance(val, str) and val.strip() != "")):
-                try:
-                    return float(str(val).replace(',', '').strip())
-                except:
-                    continue
-    return None
-
 def extract_from_pdf(pdf_file):
     payroll = None
     turnover = None
@@ -108,17 +66,16 @@ def extract_from_pdf(pdf_file):
             if tables:
                 all_tables.extend(tables)
 
+        # Extract payroll from Year 3 (index 3), gross revenue from Year 1 (index 1)
         for table in all_tables:
             if payroll is None:
-                raw_payroll = extract_staff_cost_from_table(table)
+                raw_payroll = extract_value_flexible(table, "staff costs", target_number_index=3)  # Year 3 col
                 if raw_payroll is not None:
                     payroll = raw_payroll * 1000  # multiply by 1000
-
             if turnover is None:
-                # Use existing flexible extraction for Year 1 gross revenue
-                raw_turnover = extract_value_flexible(table, "gross revenue", target_number_index=1)
+                raw_turnover = extract_value_flexible(table, "gross revenue", target_number_index=1)  # Year 1 col
                 if raw_turnover is not None:
-                    turnover = raw_turnover * 1000
+                    turnover = raw_turnover * 1000  # multiply by 1000
 
         for table in all_tables:
             if headline_rent is None:
