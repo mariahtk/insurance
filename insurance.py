@@ -23,20 +23,20 @@ extracted_turnover = None
 
 DEFAULT_OCR = 0.20  # 20% fallback Occupancy Cost Ratio
 
-def extract_value_flexible(table, key_phrase, target_number_index=1):
-    """
-    Extracts number from row containing key_phrase at target_number_index column (0-based).
-    """
+def extract_value_flexible(table, key_phrase, target_col_index=1):
     key_phrase = key_phrase.lower()
     for row in table:
-        row_text = " ".join(str(cell).lower() if cell else "" for cell in row)
-        if key_phrase in row_text:
-            numbers_str = re.findall(r"[-+]?\d*\.\d+|\d+", row_text.replace(',', ''))
-            if len(numbers_str) > target_number_index:
-                try:
-                    return float(numbers_str[target_number_index])
-                except:
-                    return None
+        # Check if any cell contains the key phrase
+        if any(cell and key_phrase in str(cell).lower() for cell in row):
+            # Check target column exists
+            if len(row) > target_col_index:
+                val_str = row[target_col_index]
+                if val_str:
+                    val_clean = re.sub(r"[^0-9.\-]", "", str(val_str).replace(',', ''))
+                    try:
+                        return float(val_clean)
+                    except:
+                        return None
     return None
 
 def extract_number_next_to_phrase(table, phrase):
@@ -69,11 +69,11 @@ def extract_from_pdf(pdf_file):
         # Extract payroll and gross revenue both from Year 1 (index 1)
         for table in all_tables:
             if payroll is None:
-                raw_payroll = extract_value_flexible(table, "staff costs", target_number_index=1)  # Year 1 col
+                raw_payroll = extract_value_flexible(table, "staff costs", target_col_index=1)
                 if raw_payroll is not None:
                     payroll = raw_payroll * 1000  # multiply by 1000
             if turnover is None:
-                raw_turnover = extract_value_flexible(table, "gross revenue", target_number_index=1)  # Year 1 col
+                raw_turnover = extract_value_flexible(table, "gross revenue", target_col_index=1)
                 if raw_turnover is not None:
                     turnover = raw_turnover * 1000  # multiply by 1000
 
@@ -177,11 +177,10 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
             payroll = 110000
     else:
         payroll = extracted_payroll
-        fte = None  # Optionally you could estimate FTE from payroll if you want
+        fte = None  # Optional: you could estimate FTE from payroll if you want
 
     rental_estimate = extracted_rental if extracted_rental is not None else sqft * market_rent
 
-    # Annual turnover with fallback to OCR logic
     DEFAULT_OCR = 0.20
     if extracted_turnover is not None:
         annual_turnover = extracted_turnover
