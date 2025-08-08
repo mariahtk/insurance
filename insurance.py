@@ -112,7 +112,8 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
         fte = 2.0
         payroll = 110000
 
-    rental_estimate = sqft * market_rent
+    # Use extracted rental if available, else fallback to sqft * market_rent input
+    rental_estimate = extracted_rental if extracted_rental is not None else sqft * market_rent
     annual_turnover = rental_estimate * 2
     gross_profit_calc = annual_turnover - rental_estimate
 
@@ -130,7 +131,7 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
 
     if any([extracted_payroll, extracted_rental, extracted_turnover]):
         st.write(f"**Estimated Annual Payroll (from PDF):** {currency} {extracted_payroll if extracted_payroll is not None else 'N/A':,.2f}")
-        st.write(f"**Rental (Budget/Estimate - Next Year) (from PDF):** {currency} {extracted_rental if extracted_rental is not None else 'N/A':,.2f}")
+        st.write(f"**Rental (Budget/Estimate - Next Year) (from PDF or input):** {currency} {rental_estimate:,.2f}")
         st.write(f"**Annual Turnover (Forecast) (from PDF):** {currency} {extracted_turnover if extracted_turnover is not None else 'N/A':,.2f}")
         if gross_profit is not None:
             st.write(f"**Annual Gross Profit (calculated from PDF):** {currency} {gross_profit:,.2f}")
