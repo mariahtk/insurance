@@ -23,12 +23,10 @@ extracted_turnover = None
 
 DEFAULT_OCR = 0.20  # 20% fallback Occupancy Cost Ratio
 
-def extract_value_flexible(table, key_phrase, target_col_index=1):
+def extract_value_flexible(table, key_phrase, target_col_index=2):  # Changed to 2 for Year 2
     key_phrase = key_phrase.lower()
     for row in table:
-        # Check if any cell contains the key phrase
         if any(cell and key_phrase in str(cell).lower() for cell in row):
-            # Check target column exists
             if len(row) > target_col_index:
                 val_str = row[target_col_index]
                 if val_str:
@@ -66,14 +64,13 @@ def extract_from_pdf(pdf_file):
             if tables:
                 all_tables.extend(tables)
 
-        # Extract payroll and gross revenue both from Year 1 (index 1)
         for table in all_tables:
             if payroll is None:
-                raw_payroll = extract_value_flexible(table, "staff costs", target_col_index=1)
+                raw_payroll = extract_value_flexible(table, "Staff Costs", target_col_index=2)  # Year 2
                 if raw_payroll is not None:
                     payroll = raw_payroll * 1000  # multiply by 1000
             if turnover is None:
-                raw_turnover = extract_value_flexible(table, "gross revenue", target_col_index=1)
+                raw_turnover = extract_value_flexible(table, "Gross Revenue", target_col_index=2)  # Year 2
                 if raw_turnover is not None:
                     turnover = raw_turnover * 1000  # multiply by 1000
 
@@ -99,19 +96,17 @@ def extract_from_excel(excel_file):
             df.columns = df.columns.astype(str)
             df_lower = df.applymap(lambda x: str(x).lower() if isinstance(x, str) else x)
 
-            # Staff costs from Year 1 (index 1)
             staff_row_idx = df_lower.index[df_lower.apply(lambda row: row.astype(str).str.contains("staff costs").any(), axis=1)]
             if len(staff_row_idx) > 0:
                 try:
-                    payroll = float(df.iloc[staff_row_idx[0], 1])
+                    payroll = float(df.iloc[staff_row_idx[0], 2])  # Year 2 column index 2
                 except:
                     payroll = None
 
-            # Gross revenue from Year 1 (index 1)
             gross_rev_idx = df_lower.index[df_lower.apply(lambda row: row.astype(str).str.contains("gross revenue").any(), axis=1)]
             if len(gross_rev_idx) > 0:
                 try:
-                    turnover = float(df.iloc[gross_rev_idx[0], 1])
+                    turnover = float(df.iloc[gross_rev_idx[0], 2])  # Year 2 column index 2
                 except:
                     turnover = None
 
@@ -161,7 +156,6 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
     building_age = random.randint(20, 50)
     num_floors = max(1, int(sqft // 10000))
 
-    # Use embedded payroll only if no extracted payroll found
     if extracted_payroll is None:
         if sqft < 10000:
             fte = 0.5
@@ -177,7 +171,7 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
             payroll = 110000
     else:
         payroll = extracted_payroll
-        fte = None  # Optional: you could estimate FTE from payroll if you want
+        fte = None
 
     rental_estimate = extracted_rental if extracted_rental is not None else sqft * market_rent
 
