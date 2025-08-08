@@ -19,6 +19,12 @@ extracted_rental = None
 extracted_turnover = None
 
 def extract_year4_value_flexible(table, key_phrase, target_number_index=4):
+    """
+    Finds a row containing key_phrase anywhere in the row,
+    extracts all numbers in that row,
+    returns the number at target_number_index (0-based),
+    or None if not found.
+    """
     key_phrase = key_phrase.lower()
     for row in table:
         row_text = " ".join(cell.lower() if cell else "" for cell in row)
@@ -32,6 +38,9 @@ def extract_year4_value_flexible(table, key_phrase, target_number_index=4):
     return None
 
 def extract_number_next_to_phrase(table, phrase):
+    """
+    Finds the row containing phrase, returns the number found in the next cell to the right.
+    """
     phrase = phrase.lower()
     for row in table:
         for idx, cell in enumerate(row):
@@ -60,7 +69,6 @@ if pdf_file is not None:
             if extracted_turnover is None:
                 extracted_turnover = extract_year4_value_flexible(table, "gross revenue")
 
-        # Extract headline rent and rentable area and calculate rental
         headline_rent = None
         rentable_area = None
         for table in all_tables:
@@ -68,7 +76,7 @@ if pdf_file is not None:
                 headline_rent = extract_number_next_to_phrase(table, "headline rent (as reviewed by partner) usd psft p.a.")
             if rentable_area is None:
                 rentable_area = extract_number_next_to_phrase(table, "rentable area sqft")
-        
+
         if headline_rent is not None and rentable_area is not None:
             extracted_rental = headline_rent * rentable_area
         else:
