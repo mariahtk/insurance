@@ -7,6 +7,19 @@ import requests
 
 st.title("🏢 Insurance Report Generator")
 
+# Hide GitHub icon and hamburger menu
+hide_streamlit_style = """
+    <style>
+    /* Hide the hamburger menu */
+    #MainMenu {visibility: hidden;}
+    /* Hide the Streamlit footer */
+    footer {visibility: hidden;}
+    /* Hide the GitHub icon */
+    header > div:nth-child(1) {visibility: hidden;}
+    </style>
+"""
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+
 address = st.text_input(" Building Address")
 currency = st.selectbox(" Currency", ["CAD", "USD"])
 sqft = st.number_input(" Building Square Footage", min_value=0.0, value=0.0)
