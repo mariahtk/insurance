@@ -20,40 +20,41 @@ extracted_payroll = None
 extracted_rental = None
 extracted_turnover = None
 
-def extract_year4_value(table, row_label):
+def extract_year4_value_flexible(table, key_phrase, target_number_index=4):
     """
-    Given a table (list of lists), find the row where first column matches row_label
-    and return the value under the Year 4 column (assumed to be the 5th column, index 4).
+    For each row in the table, if the key_phrase is found anywhere in the row (any cell),
+    extract all numbers from that row, then pick the number at target_number_index (0-based).
+    If no suitable number found, return None.
     """
+    key_phrase = key_phrase.lower()
     for row in table:
-        if len(row) > 4 and row[0].strip().lower() == row_label.strip().lower():
-            # Clean the value to extract numbers only, remove commas and currency symbols
-            val_str = row[4]
-            if val_str:
-                val_clean = re.sub(r"[^0-9.\-]", "", val_str)
+        # Join all cells text and search for the key phrase
+        row_text = " ".join(cell.lower() if cell else "" for cell in row)
+        if key_phrase in row_text:
+            # Extract all numbers from the row text
+            numbers_str = re.findall(r"[-+]?\d*\.\d+|\d+", row_text.replace(',', ''))
+            if len(numbers_str) > target_number_index:
                 try:
-                    return float(val_clean)
+                    return float(numbers_str[target_number_index])
                 except:
                     return None
     return None
 
 if pdf_file is not None:
     with pdfplumber.open(pdf_file) as pdf:
-        # Aggregate tables from all pages to search
         all_tables = []
         for page in pdf.pages:
             tables = page.extract_tables()
             if tables:
                 all_tables.extend(tables)
         
-        # Try to extract the values based on the row labels you gave
         for table in all_tables:
             if extracted_payroll is None:
-                extracted_payroll = extract_year4_value(table, "Staff Costs")
+                extracted_payroll = extract_year4_value_flexible(table, "staff costs")
             if extracted_rental is None:
-                extracted_rental = extract_year4_value(table, "Market Rent (as reviewed by partner)")
+                extracted_rental = extract_year4_value_flexible(table, "market rent")
             if extracted_turnover is None:
-                extracted_turnover = extract_year4_value(table, "Gross Revenue")
+                extracted_turnover = extract_year4_value_flexible(table, "gross revenue")
 
 # Show extracted values if found
 if pdf_file:
@@ -62,7 +63,7 @@ if pdf_file:
     st.write(f"**Rental (Budget/Estimate - Next Year):** {extracted_rental if extracted_rental is not None else 'Not found'}")
     st.write(f"**Annual Turnover (Forecast):** {extracted_turnover if extracted_turnover is not None else 'Not found'}")
 
-# If PDF extracted all needed values, calculate gross profit from those
+# Calculate gross profit from extracted PDF values if available
 if extracted_turnover is not None and extracted_rental is not None:
     gross_profit = extracted_turnover - extracted_rental
 else:
@@ -93,7 +94,7 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
     # Financial Calculations
     rental_estimate = sqft * market_rent
     annual_turnover = rental_estimate * 2
-    gross_profit_calc = rental_estimate - annual_turnover
+    gross_profit_calc = annual_turnover - rental_estimate  # corrected from original (turnover - rental)
 
     # Report Display
     st.subheader("🏗️ Building Information")
@@ -109,10 +110,10 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
     st.subheader("📊 Forecasted Financials")
 
     # If PDF extraction successful, show those values, else use original calculations
-    if extracted_payroll is not None or extracted_rental is not None or extracted_turnover is not None:
-        st.write(f"**Estimated Annual Payroll (from PDF):** {currency} {extracted_payroll if extracted_payroll else 'N/A':,.2f}")
-        st.write(f"**Rental (Budget/Estimate - Next Year) (from PDF):** {currency} {extracted_rental if extracted_rental else 'N/A':,.2f}")
-        st.write(f"**Annual Turnover (Forecast) (from PDF):** {currency} {extracted_turnover if extracted_turnover else 'N/A':,.2f}")
+    if any([extracted_payroll, extracted_rental, extracted_turnover]):
+        st.write(f"**Estimated Annual Payroll (from PDF):** {currency} {extracted_payroll if extracted_payroll is not None else 'N/A':,.2f}")
+        st.write(f"**Rental (Budget/Estimate - Next Year) (from PDF):** {currency} {extracted_rental if extracted_rental is not None else 'N/A':,.2f}")
+        st.write(f"**Annual Turnover (Forecast) (from PDF):** {currency} {extracted_turnover if extracted_turnover is not None else 'N/A':,.2f}")
         if gross_profit is not None:
             st.write(f"**Annual Gross Profit (calculated from PDF):** {currency} {gross_profit:,.2f}")
         else:
