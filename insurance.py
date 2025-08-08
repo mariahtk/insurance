@@ -7,10 +7,10 @@ import requests
 
 st.title("🏢 Insurance Report Generator")
 
-address = st.text_input("📍 Building Address")
-currency = st.selectbox("💱 Currency", ["CAD", "USD"])
-sqft = st.number_input("📐 Building Square Footage", min_value=0.0, value=0.0)
-market_rent = st.number_input(f"💰 Market Rent ({currency} / sqft)", min_value=0.0, value=0.0)
+address = st.text_input(" Building Address")
+currency = st.selectbox(" Currency", ["CAD", "USD"])
+sqft = st.number_input(" Building Square Footage", min_value=0.0, value=0.0)
+market_rent = st.number_input(f" Market Rent ({currency} / sqft)", min_value=0.0, value=0.0)
 
 st.markdown("---")
 st.subheader("Optional manual overrides (if OSM data is missing or unavailable)")
@@ -260,13 +260,13 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
     if annual_turnover is not None and rental_estimate is not None:
         gross_profit_calc = annual_turnover - rental_estimate
 
-    st.subheader("🏗️ Building Information")
+    st.subheader("🏗 Building Information")
     st.write(f"**Address:** {address}")
     st.write(f"**Multi-tenanted:** {multi_tenanted}")
     st.write(f"**Approximate Age:** {building_age} years")
     st.write(f"**Total Floors (excl. basement):** {num_floors}")
 
-    st.subheader("👥 Employment Estimate")
+    st.subheader(" Employment Estimate")
     if extracted_payroll is not None:
         st.write(f"**Estimated Annual Payroll (from file):** {currency} {payroll:,.2f}")
         if fte is not None:
@@ -275,7 +275,7 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
         st.write(f"**Estimated FTEs:** {fte}")
         st.write(f"**Estimated Annual Payroll:** {currency} {payroll:,.2f}")
 
-    st.subheader("📊 Forecasted Financials")
+    st.subheader(" Forecasted Financials")
     if any([extracted_payroll, extracted_rental, extracted_turnover]):
         st.write(f"**Rental (Budget/Estimate - Next Year) (from file or input):** {currency} {rental_estimate:,.2f}")
         st.write(f"**Annual Turnover (Forecast):** {currency} {annual_turnover:,.2f}" if annual_turnover else "Annual Turnover: N/A")
