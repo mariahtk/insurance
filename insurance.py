@@ -23,29 +23,17 @@ extracted_turnover = None
 
 DEFAULT_OCR = 0.20  # 20% fallback Occupancy Cost Ratio
 
-def is_summary_pnl_cashflow_table(table):
-    # Checks if table contains "Summary P&L and Cashflow" in header or nearby
-    header_texts = [str(cell).lower() if cell else "" for row in table[:2] for cell in row]
-    return any("summary p&l and cashflow" in text for text in header_texts)
-
-def extract_value_from_summary_table(table, key_phrase, target_col_index=1):
-    """
-    Extract a value matching key_phrase exactly (case sensitive) from
-    Summary P&L and Cashflow table at target_col_index (Year 1).
-    """
+def extract_year_value_flexible(table, key_phrase, target_number_index=1):  # Changed to year 1 = index 1
+    key_phrase = key_phrase.lower()
     for row in table:
-        # Because case sensitive, we do direct cell check
-        for cell in row:
-            if cell == key_phrase:
-                # Check if target_col_index is valid in this row
-                if len(row) > target_col_index:
-                    val_str = row[target_col_index]
-                    if val_str:
-                        val_clean = re.sub(r"[^0-9.\-]", "", str(val_str).replace(',', ''))
-                        try:
-                            return float(val_clean)
-                        except:
-                            return None
+        row_text = " ".join(str(cell).lower() if cell else "" for cell in row)
+        if key_phrase in row_text:
+            numbers_str = re.findall(r"[-+]?\d*\.\d+|\d+", row_text.replace(',', ''))
+            if len(numbers_str) > target_number_index:
+                try:
+                    return float(numbers_str[target_number_index])
+                except:
+                    return None
     return None
 
 def extract_number_next_to_phrase(table, phrase):
@@ -74,54 +62,22 @@ def extract_from_pdf(pdf_file):
             tables = page.extract_tables()
             if tables:
                 all_tables.extend(tables)
-
-        # Find the Summary P&L and Cashflow table
-        summary_tables = [t for t in all_tables if is_summary_pnl_cashflow_table(t)]
-        if summary_tables:
-            summary_table = summary_tables[0]
-            payroll_raw = extract_value_from_summary_table(summary_table, "Staff Costs", target_col_index=1)
-            turnover_raw = extract_value_from_summary_table(summary_table, "Gross Revenue", target_col_index=1)
-            if payroll_raw is not None:
-                payroll = payroll_raw * 1000
-            if turnover_raw is not None:
-                turnover = turnover_raw * 1000
-        else:
-            # fallback: search all tables for Staff Costs and Gross Revenue, case insensitive
-            for table in all_tables:
-                if payroll is None:
-                    raw_payroll = extract_value_flexible(table, "staff costs", target_col_index=1)
-                    if raw_payroll is not None:
-                        payroll = raw_payroll * 1000
-                if turnover is None:
-                    raw_turnover = extract_value_flexible(table, "gross revenue", target_col_index=1)
-                    if raw_turnover is not None:
-                        turnover = raw_turnover * 1000
-
-        # Extract headline rent and rentable area normally
+        for table in all_tables:
+            if payroll is None:
+                raw_payroll = extract_year_value_flexible(table, "staff costs")  # year 1 column
+                if raw_payroll is not None:
+                    payroll = raw_payroll * 1000  # add 3 zeros
+            if turnover is None:
+                turnover = extract_year_value_flexible(table, "gross revenue")  # year 1 column
         for table in all_tables:
             if headline_rent is None:
                 headline_rent = extract_number_next_to_phrase(table, "headline rent (as reviewed by partner) usd psft p.a.")
             if rentable_area is None:
                 rentable_area = extract_number_next_to_phrase(table, "rentable area sqft")
-
     rental = None
     if headline_rent is not None and rentable_area is not None:
         rental = headline_rent * rentable_area
     return payroll, rental, turnover
-
-def extract_value_flexible(table, key_phrase, target_col_index=1):
-    key_phrase = key_phrase.lower()
-    for row in table:
-        if any(cell and key_phrase in str(cell).lower() for cell in row):
-            if len(row) > target_col_index:
-                val_str = row[target_col_index]
-                if val_str:
-                    val_clean = re.sub(r"[^0-9.\-]", "", str(val_str).replace(',', ''))
-                    try:
-                        return float(val_clean)
-                    except:
-                        return None
-    return None
 
 def extract_from_excel(excel_file):
     payroll = None
@@ -131,23 +87,28 @@ def extract_from_excel(excel_file):
         xls = pd.ExcelFile(excel_file)
         if "Owned Summary" in xls.sheet_names:
             df = pd.read_excel(xls, sheet_name="Owned Summary")
+            # Normalize columns to strings
             df.columns = df.columns.astype(str)
+            # Lowercase all strings in DataFrame for searching
             df_lower = df.applymap(lambda x: str(x).lower() if isinstance(x, str) else x)
 
+            # Find 'Staff Costs' row and get year 1 value (index 1)
             staff_row_idx = df_lower.index[df_lower.apply(lambda row: row.astype(str).str.contains("staff costs").any(), axis=1)]
             if len(staff_row_idx) > 0:
                 try:
-                    payroll = float(df.iloc[staff_row_idx[0], 1])  # Year 1 column index 1
+                    payroll = float(df.iloc[staff_row_idx[0], 1])  # year 1 column
                 except:
                     payroll = None
 
+            # Find 'Gross Revenue' row and get year 1 value
             gross_rev_idx = df_lower.index[df_lower.apply(lambda row: row.astype(str).str.contains("gross revenue").any(), axis=1)]
             if len(gross_rev_idx) > 0:
                 try:
-                    turnover = float(df.iloc[gross_rev_idx[0], 1])  # Year 1 column index 1
+                    turnover = float(df.iloc[gross_rev_idx[0], 1])  # year 1 column
                 except:
                     turnover = None
 
+            # Find 'Headline Rent (as reviewed by partner) USD psft p.a.' and 'Rentable Area sqft'
             headline_rent = None
             rentable_area = None
             for idx, row in df_lower.iterrows():
@@ -194,6 +155,7 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
     building_age = random.randint(20, 50)
     num_floors = max(1, int(sqft // 10000))
 
+    # Only use embedded payroll if no extracted payroll found
     if extracted_payroll is None:
         if sqft < 10000:
             fte = 0.5
@@ -209,10 +171,14 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
             payroll = 110000
     else:
         payroll = extracted_payroll
+        # Estimate FTE from payroll roughly (optional, or keep as None)
         fte = None
 
+    # Use extracted rental if available, else fallback to sqft * market_rent input
     rental_estimate = extracted_rental if extracted_rental is not None else sqft * market_rent
 
+    # Annual turnover with fallback to OCR logic
+    DEFAULT_OCR = 0.20
     if extracted_turnover is not None:
         annual_turnover = extracted_turnover
     elif rental_estimate is not None and rental_estimate > 0:
@@ -240,6 +206,7 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
         st.write(f"**Estimated Annual Payroll:** {currency} {payroll:,.2f}")
 
     st.subheader("📊 Forecasted Financials")
+
     if any([extracted_payroll, extracted_rental, extracted_turnover]):
         st.write(f"**Rental (Budget/Estimate - Next Year) (from file or input):** {currency} {rental_estimate:,.2f}")
         st.write(f"**Annual Turnover (Forecast):** {currency} {annual_turnover:,.2f}" if annual_turnover else "Annual Turnover: N/A")
