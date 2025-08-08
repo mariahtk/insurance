@@ -8,10 +8,10 @@ import time
 
 st.title("🏢 Insurance Report Generator")
 
-address = st.text_input("📍 Building Address")
-currency = st.selectbox("💱 Currency", ["CAD", "USD"])
-sqft = st.number_input("📐 Building Square Footage", min_value=0.0, value=0.0)
-market_rent = st.number_input(f"💰 Market Rent ({currency} / sqft)", min_value=0.0, value=0.0)
+address = st.text_input(" Building Address")
+currency = st.selectbox(" Currency", ["CAD", "USD"])
+sqft = st.number_input(" Building Square Footage", min_value=0.0, value=0.0)
+market_rent = st.number_input(f" Market Rent ({currency} / sqft)", min_value=0.0, value=0.0)
 
 st.markdown("---")
 st.subheader("📄 Upload Insurance Report PDF or Excel file")
