@@ -1,5 +1,7 @@
 streamlit
+pdfplumber
 pandas
+requests
+python-docx
 openpyxl     # for Excel export
 reportlab    # for PDF generation
-pdfplumber
