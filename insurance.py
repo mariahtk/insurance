@@ -33,7 +33,6 @@ num_floors_input = st.number_input("Total Floors (excl. basement)", min_value=0,
 
 st.markdown("---")
 st.subheader("📄 Upload Insurance Report PDF file")
-
 pdf_file = st.file_uploader("Upload PDF", type=["pdf"])
 
 DEFAULT_OCR = 0.20  # 20% fallback Occupancy Cost Ratio
@@ -173,16 +172,10 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
     osm_floors = get_building_floors_osm(lat, lon)
 
     # Multi-tenanted logic: treat "Unknown" as "Yes" by default
-    if multi_tenanted_input != "Unknown":
-        multi_tenanted = multi_tenanted_input
-    else:
-        multi_tenanted = "Yes"
+    multi_tenanted = multi_tenanted_input if multi_tenanted_input != "Unknown" else "Yes"
 
     # Building age: manual override else random fallback
-    if building_age_input > 0:
-        building_age = building_age_input
-    else:
-        building_age = random.randint(20, 50)
+    building_age = building_age_input if building_age_input > 0 else random.randint(20, 50)
 
     # Floors: manual override > OSM > fallback
     if num_floors_input > 0:
@@ -192,37 +185,40 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
     else:
         num_floors = max(1, int(sqft // 10000))
 
-    # Payroll estimate logic
-    if extracted_payroll is None:
-        if sqft < 10000:
-            fte = 0.5
-            payroll = 50000
-        elif sqft < 15000:
-            fte = 1.0
-            payroll = 65000
-        elif sqft < 20000:
-            fte = 1.5
-            payroll = 110000
-        else:
-            fte = 2.0
-            payroll = 110000
+    # --- Payroll & FTE estimate logic ---
+    # Always calculate FTE based on sqft
+    if sqft < 10000:
+        fte = 0.5
+    elif sqft < 15000:
+        fte = 1.0
+    elif sqft < 20000:
+        fte = 1.5
     else:
+        fte = 2.0
+
+    # Payroll logic: use extracted if available, else estimate
+    if extracted_payroll is not None:
         payroll = extracted_payroll
-        fte = None
+    else:
+        if fte == 0.5:
+            payroll = 50000
+        elif fte == 1.0:
+            payroll = 65000
+        else:
+            payroll = 110000
 
+    # Rental & Turnover
     rental_estimate = extracted_rental if extracted_rental is not None else sqft * market_rent
-
     if extracted_turnover is not None:
         annual_turnover = extracted_turnover
-    elif rental_estimate is not None and rental_estimate > 0:
+    elif rental_estimate > 0:
         annual_turnover = rental_estimate / DEFAULT_OCR
     else:
         annual_turnover = (sqft * market_rent) / DEFAULT_OCR if sqft > 0 and market_rent > 0 else None
 
-    gross_profit_calc = None
-    if annual_turnover is not None and rental_estimate is not None:
-        gross_profit_calc = annual_turnover - rental_estimate
+    gross_profit_calc = annual_turnover - rental_estimate if annual_turnover and rental_estimate else None
 
+    # --- Display ---
     st.subheader("🏗 Building Information")
     st.write(f"**Address:** {address}")
     st.write(f"**Multi-tenanted:** {multi_tenanted}")
@@ -230,28 +226,13 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
     st.write(f"**Total Floors (excl. basement):** {num_floors}")
 
     st.subheader(" Employment Estimate")
-    if extracted_payroll is not None:
-        st.write(f"**Estimated Annual Payroll (from file):** {currency} {payroll:,.2f}")
-        if fte is not None:
-            st.write(f"**Estimated FTEs:** {fte}")
-    else:
-        st.write(f"**Estimated FTEs:** {fte}")
-        st.write(f"**Estimated Annual Payroll:** {currency} {payroll:,.2f}")
+    st.write(f"**Estimated FTEs:** {fte}")
+    st.write(f"**Estimated Annual Payroll:** {currency} {payroll:,.2f}")
 
     st.subheader(" Forecasted Financials")
-    if any([extracted_payroll, extracted_rental, extracted_turnover]):
-        st.write(f"**Rental (Budget/Estimate - Next Year) (from file or input):** {currency} {rental_estimate:,.2f}")
-        st.write(f"**Annual Turnover (Forecast):** {currency} {annual_turnover:,.2f}" if annual_turnover else "Annual Turnover: N/A")
-        if gross_profit is not None:
-            st.write(f"**Annual Gross Profit (calculated from file):** {currency} {gross_profit:,.2f}")
-        elif gross_profit_calc is not None:
-            st.write(f"**Annual Gross Profit (calculated):** {currency} {gross_profit_calc:,.2f}")
-        else:
-            st.write("**Annual Gross Profit:** Unable to calculate")
-    else:
-        st.write(f"**3.5 Rental (Budget/Estimate - Next Year):** {currency} {rental_estimate:,.2f}")
-        st.write(f"**3.3 Annual Turnover (Forecast):** {currency} {annual_turnover:,.2f}" if annual_turnover else "Annual Turnover: N/A")
-        st.write(f"**3.4 Annual Gross Profit:** {currency} {gross_profit_calc:,.2f}" if gross_profit_calc else "Gross Profit: N/A")
+    st.write(f"**Rental (Budget/Estimate - Next Year):** {currency} {rental_estimate:,.2f}")
+    st.write(f"**Annual Turnover (Forecast):** {currency} {annual_turnover:,.2f}" if annual_turnover else "Annual Turnover: N/A")
+    st.write(f"**Annual Gross Profit:** {currency} {gross_profit_calc:,.2f}" if gross_profit_calc else "Gross Profit: N/A")
 
 else:
     st.info("Please fill in all fields to generate the report.")
