@@ -10,7 +10,7 @@ from io import BytesIO
 
 st.title("🏢 Insurance Report Generator")
 
-# Hide Streamlit default UI
+# Hide Streamlit menu/footer
 hide_streamlit_style = """
     <style>
     #MainMenu {visibility: hidden;}
@@ -20,11 +20,11 @@ hide_streamlit_style = """
 """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-# Inputs
-address = st.text_input("Building Address")
-currency = st.selectbox("Currency", ["CAD", "USD"])
-sqft = st.number_input("Building Square Footage", min_value=0.0, value=0.0)
-market_rent = st.number_input(f"Market Rent ({currency} / sqft)", min_value=0.0, value=0.0)
+# --------------------- INPUTS ---------------------
+address = st.text_input(" Building Address", "NJ, Newark - 3 Gateway Center")
+currency = st.selectbox(" Currency", ["CAD", "USD"])
+sqft = st.number_input(" Building Square Footage", min_value=0.0, value=20000.0)
+market_rent = st.number_input(f" Market Rent ({currency} / sqft)", min_value=0.0, value=50.0)
 
 st.markdown("---")
 st.subheader("Optional manual overrides (if OSM data is missing or unavailable)")
@@ -36,9 +36,9 @@ st.markdown("---")
 st.subheader("📄 Upload Insurance Report PDF file")
 pdf_file = st.file_uploader("Upload PDF", type=["pdf"])
 
-DEFAULT_OCR = 0.20  # fallback Occupancy Cost Ratio
+DEFAULT_OCR = 0.20  # 20% fallback Occupancy Cost Ratio
 
-# --- PDF extraction functions ---
+# --------------------- PDF EXTRACTION ---------------------
 def extract_value_flexible(table, key_phrase, target_number_index=1):
     key_phrase = key_phrase.lower()
     for row in table:
@@ -78,6 +78,7 @@ def extract_from_pdf(pdf_file):
             tables = page.extract_tables()
             if tables:
                 all_tables.extend(tables)
+
         for table in all_tables:
             if payroll is None:
                 raw_payroll = extract_value_flexible(table, "staff costs", target_number_index=3)
@@ -87,11 +88,13 @@ def extract_from_pdf(pdf_file):
                 raw_turnover = extract_value_flexible(table, "gross revenue", target_number_index=1)
                 if raw_turnover is not None:
                     turnover = raw_turnover * 1000
+
         for table in all_tables:
             if headline_rent is None:
                 headline_rent = extract_number_next_to_phrase(table, "headline rent (as reviewed by partner) usd psft p.a.")
             if rentable_area is None:
                 rentable_area = extract_number_next_to_phrase(table, "rentable area sqft")
+
     rental = None
     if headline_rent is not None and rentable_area is not None:
         rental = headline_rent * rentable_area
@@ -102,24 +105,19 @@ if pdf_file is not None:
 else:
     extracted_payroll, extracted_rental, extracted_turnover = None, None, None
 
-if pdf_file:
-    st.markdown("### Extracted values from uploaded file:")
-    st.write(f"**Estimated Annual Payroll:** {extracted_payroll if extracted_payroll is not None else 'Not found'}")
-    st.write(f"**Rental (Budget/Estimate - Next Year):** {extracted_rental if extracted_rental is not None else 'Not found'}")
-    st.write(f"**Annual Turnover (Forecast):** {extracted_turnover if extracted_turnover is not None else 'Not found'}")
+# --------------------- GENERATE REPORT ---------------------
+if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
 
-# --- Report generation ---
-if st.button("Generate Word Report") and address and sqft > 0 and market_rent > 0:
     # Multi-tenanted logic
     multi_tenanted = multi_tenanted_input if multi_tenanted_input != "Unknown" else "Yes"
 
     # Building age
-    building_age = building_age_input if building_age_input > 0 else random.randint(20, 50)
+    building_age = building_age_input if building_age_input > 0 else random.randint(20,50)
 
     # Floors
-    num_floors = int(num_floors_input) if num_floors_input > 0 else max(1, int(sqft // 10000))
+    num_floors = num_floors_input if num_floors_input > 0 else max(1, int(sqft // 10000))
 
-    # Payroll / FTE logic based on square footage
+    # Payroll / FTE
     if extracted_payroll is None:
         if sqft < 10000:
             fte = 0.5
@@ -135,67 +133,19 @@ if st.button("Generate Word Report") and address and sqft > 0 and market_rent > 
             payroll = 110000
     else:
         payroll = extracted_payroll
-        fte = None  # we could also calculate FTE from payroll but keeping your logic
+        fte = round(payroll / 55000,1)  # example FTE calculation
 
+    # Rental / turnover
     rental_estimate = extracted_rental if extracted_rental is not None else sqft * market_rent
-    if extracted_turnover is not None:
-        annual_turnover = extracted_turnover
-    elif rental_estimate is not None and rental_estimate > 0:
-        annual_turnover = rental_estimate / DEFAULT_OCR
-    else:
-        annual_turnover = (sqft * market_rent) / DEFAULT_OCR if sqft > 0 and market_rent > 0 else None
-
+    annual_turnover = extracted_turnover if extracted_turnover is not None else (rental_estimate / DEFAULT_OCR)
     gross_profit_calc = annual_turnover - rental_estimate if annual_turnover and rental_estimate else None
 
-    # Load template
-    doc = Document("Insurance Template.docx")
-
-    # Replace lines above table
-    for paragraph in doc.paragraphs:
-        if "Is building multi-" in paragraph.text:
-            paragraph.add_run(f" {multi_tenanted}").font.color.rgb = RGBColor(0,0,255)
-        if "Approximate age of the building" in paragraph.text:
-            paragraph.add_run(f" {building_age} years").font.color.rgb = RGBColor(0,0,255)
-        if "Total number of floors" in paragraph.text:
-            paragraph.add_run(f" {num_floors}").font.color.rgb = RGBColor(0,0,255)
-        if "Number of employees will be employed" in paragraph.text:
-            paragraph.add_run(f" {fte}").font.color.rgb = RGBColor(0,0,255)
-
-    # Fill table $ placeholders: turnover, gross profit, rental, payroll
-    table_values = [annual_turnover, gross_profit_calc, rental_estimate, payroll]
-    for table in doc.tables:
-        val_idx = 0
-        for row in table.rows:
-            for cell in row.cells:
-                if "$" in cell.text and val_idx < len(table_values):
-                    cell.text = f"$ {table_values[val_idx]:,.2f}"  # Always $ XXX,XXX.XX
-                    for paragraph in cell.paragraphs:
-                        for run in paragraph.runs:
-                            run.font.color.rgb = RGBColor(0,0,255)
-                    val_idx += 1
-
-    # Adjust "All values are in ..." line
-    for paragraph in doc.paragraphs:
-        if "All values are in" in paragraph.text:
-            paragraph.text = f"All values are in {currency} and sq ft."
-
-    # Save Word to BytesIO for download
-    output = BytesIO()
-    doc.save(output)
-    output.seek(0)
-    st.download_button(
-        label="Download Word Report",
-        data=output,
-        file_name="Insurance_Report.docx",
-        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    )
-
-    # Show calculated info in UI
+    # --------------------- DISPLAY ---------------------
     st.subheader("🏗 Building Information")
     st.write(f"**Address:** {address}")
     st.write(f"**Multi-tenanted:** {multi_tenanted}")
     st.write(f"**Approximate Age:** {building_age} years")
-    st.write(f"**Total Floors (excl. basement):** {num_floors}")
+    st.write(f"**Total Floors:** {num_floors}")
 
     st.subheader(" Employment Estimate")
     st.write(f"**Estimated FTEs:** {fte}")
@@ -204,6 +154,53 @@ if st.button("Generate Word Report") and address and sqft > 0 and market_rent > 
     st.subheader(" Forecasted Financials")
     st.write(f"**Rental (Budget/Estimate - Next Year):** {currency} {rental_estimate:,.2f}")
     st.write(f"**Annual Turnover (Forecast):** {currency} {annual_turnover:,.2f}")
-    st.write(f"**Annual Gross Profit:** {currency} {gross_profit_calc:,.2f}")
-else:
-    st.info("Please fill in all fields to generate the report.")
+    st.write(f"**Annual Gross Profit (calculated):** {currency} {gross_profit_calc:,.2f}")
+
+    # --------------------- GENERATE WORD DOC ---------------------
+    try:
+        doc = Document("Insurance Template.docx")
+
+        # Replace "All values are in and sq ft." line
+        for paragraph in doc.paragraphs:
+            if "All values are in" in paragraph.text:
+                paragraph.text = f"Please see the answers in blue below. All values are in {currency} and sq ft."
+
+        # Fill answers to questions
+        for paragraph in doc.paragraphs:
+            if "Is building multi- tenanted" in paragraph.text:
+                paragraph.add_run(f" {multi_tenanted}").font.color.rgb = RGBColor(0,0,255)
+            if "Approximate age of the building" in paragraph.text:
+                paragraph.add_run(f" {building_age} years").font.color.rgb = RGBColor(0,0,255)
+            if "Total number of floors" in paragraph.text:
+                paragraph.add_run(f" {num_floors}").font.color.rgb = RGBColor(0,0,255)
+            if "Number of employees will be employed" in paragraph.text:
+                paragraph.add_run(f" {fte}").font.color.rgb = RGBColor(0,0,255)
+
+        # Fill table $ placeholders: turnover, gross profit, rental, payroll
+        table_values = [annual_turnover, gross_profit_calc, rental_estimate, payroll]
+        for table in doc.tables:
+            val_idx = 0
+            for row in table.rows:
+                for cell in row.cells:
+                    if "$" in cell.text and val_idx < len(table_values):
+                        cell.text = f"{currency} {table_values[val_idx]:,.2f}"
+                        # make value blue
+                        for paragraph in cell.paragraphs:
+                            for run in paragraph.runs:
+                                run.font.color.rgb = RGBColor(0,0,255)
+                        val_idx += 1
+
+        # Save Word doc to BytesIO
+        output = BytesIO()
+        doc.save(output)
+        output.seek(0)
+
+        st.download_button(
+            label="📄 Download Insurance Report",
+            data=output,
+            file_name=f"Insurance_Report_{address.replace(' ','_')}.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
+
+    except Exception as e:
+        st.error(f"Error generating Word document: {e}")
