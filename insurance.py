@@ -5,11 +5,12 @@ import re
 import pandas as pd
 import requests
 from docx import Document
+from docx.shared import RGBColor
 from io import BytesIO
 
 st.title("🏢 Insurance Report Generator")
 
-# Hide Streamlit footer and menu
+# Hide GitHub icon and hamburger menu
 hide_streamlit_style = """
     <style>
     #MainMenu {visibility: hidden;}
@@ -19,14 +20,14 @@ hide_streamlit_style = """
 """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-# ---------------- Inputs ----------------
-address = st.text_input("Building Address")
-currency = st.selectbox("Currency", ["CAD", "USD"])
-sqft = st.number_input("Building Square Footage", min_value=0.0, value=0.0)
-market_rent = st.number_input(f"Market Rent ({currency} / sqft)", min_value=0.0, value=0.0)
+# ---------------- User Inputs ----------------
+address = st.text_input(" Building Address")
+currency = st.selectbox(" Currency", ["CAD", "USD"])
+sqft = st.number_input(" Building Square Footage", min_value=0.0, value=0.0)
+market_rent = st.number_input(f" Market Rent ({currency} / sqft)", min_value=0.0, value=0.0)
 
 st.markdown("---")
-st.subheader("Optional manual overrides")
+st.subheader("Optional manual overrides (if OSM data is missing or unavailable)")
 multi_tenanted_input = st.selectbox("Is the building multi-tenanted?", ["Unknown", "Yes", "No"], index=0)
 building_age_input = st.number_input("Approximate Building Age (years)", min_value=0, max_value=200, value=0)
 num_floors_input = st.number_input("Total Floors (excl. basement)", min_value=0, max_value=100, value=0)
@@ -37,7 +38,7 @@ pdf_file = st.file_uploader("Upload PDF", type=["pdf"])
 
 DEFAULT_OCR = 0.20  # 20% fallback Occupancy Cost Ratio
 
-# ---------------- Extraction Functions ----------------
+# ---------------- Extraction functions ----------------
 def extract_value_flexible(table, key_phrase, target_number_index=1):
     key_phrase = key_phrase.lower()
     for row in table:
@@ -99,70 +100,25 @@ def extract_from_pdf(pdf_file):
         rental = headline_rent * rentable_area
     return payroll, rental, turnover
 
+# ---------------- Extract PDF data ----------------
 if pdf_file is not None:
     extracted_payroll, extracted_rental, extracted_turnover = extract_from_pdf(pdf_file)
 else:
     extracted_payroll, extracted_rental, extracted_turnover = None, None, None
 
-# ---------------- OSM Functions ----------------
-def geocode_address(address):
-    url = "https://nominatim.openstreetmap.org/search"
-    params = {"q": address, "format": "json", "limit": 1}
-    try:
-        resp = requests.get(url, params=params, timeout=10, headers={"User-Agent": "StreamlitApp"})
-        resp.raise_for_status()
-        data = resp.json()
-        if data:
-            return float(data[0]["lat"]), float(data[0]["lon"])
-    except Exception as e:
-        st.error(f"Error geocoding address: {e}")
-    return None, None
-
-def get_building_floors_osm(lat, lon):
-    if lat is None or lon is None:
-        return None
-    query = f"""
-    [out:json];
-    (
-      way(around:30,{lat},{lon})["building"];
-      relation(around:30,{lat},{lon})["building"];
-      node(around:30,{lat},{lon})["building"];
-    );
-    out tags 1;
-    """
-    url = "https://overpass-api.de/api/interpreter"
-    try:
-        resp = requests.post(url, data=query, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
-        elements = data.get("elements", [])
-        for el in elements:
-            tags = el.get("tags", {})
-            if "building:levels" in tags:
-                return int(re.findall(r'\d+', tags["building:levels"])[0])
-    except Exception as e:
-        st.error(f"Error querying Overpass API: {e}")
-    return None
-
-# ---------------- Generate Report ----------------
+# ---------------- Generate Report Logic ----------------
 if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
-    # Multi-tenanted
+
+    # Multi-tenanted logic: "Unknown" treated as Yes
     multi_tenanted = multi_tenanted_input if multi_tenanted_input != "Unknown" else "Yes"
 
     # Building age
-    building_age = building_age_input if building_age_input > 0 else random.randint(20, 50)
+    building_age = building_age_input if building_age_input > 0 else random.randint(20,50)
 
-    # Floors
-    lat, lon = geocode_address(address)
-    osm_floors = get_building_floors_osm(lat, lon)
-    if num_floors_input > 0:
-        num_floors = int(num_floors_input)
-    elif osm_floors:
-        num_floors = osm_floors
-    else:
-        num_floors = max(1, int(sqft // 10000))
+    # Floors: manual > fallback
+    num_floors = int(num_floors_input) if num_floors_input > 0 else max(1, int(sqft // 10000))
 
-    # Payroll / FTE
+    # Payroll & FTE
     if extracted_payroll is None:
         if sqft < 10000:
             fte = 0.5
@@ -178,69 +134,81 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
             payroll = 110000
     else:
         payroll = extracted_payroll
-        fte = 1.5 if extracted_payroll is not None else 1.0  # Ensure FTE always shows
+        fte = max(0.5, round(payroll/50000,1))  # ensure FTE is always shown
 
     rental_estimate = extracted_rental if extracted_rental is not None else sqft * market_rent
-    annual_turnover = extracted_turnover if extracted_turnover is not None else rental_estimate / DEFAULT_OCR
-    gross_profit_calc = annual_turnover - rental_estimate
 
-    # Display in Streamlit UI
+    if extracted_turnover is not None:
+        annual_turnover = extracted_turnover
+    else:
+        annual_turnover = rental_estimate / DEFAULT_OCR if rental_estimate else (sqft*market_rent)/DEFAULT_OCR
+
+    gross_profit_calc = annual_turnover - rental_estimate if annual_turnover and rental_estimate else 0
+
+    # ---------------- Display in Streamlit ----------------
     st.subheader("🏗 Building Information")
     st.write(f"**Address:** {address}")
     st.write(f"**Multi-tenanted:** {multi_tenanted}")
     st.write(f"**Approximate Age:** {building_age} years")
     st.write(f"**Total Floors (excl. basement):** {num_floors}")
 
-    st.subheader("Employment Estimate")
+    st.subheader("💼 Employment Estimate")
     st.write(f"**Estimated FTEs:** {fte}")
-    st.write(f"**Estimated Annual Payroll:** {currency} {payroll:,.2f}")
+    st.write(f"**Estimated Annual Payroll:** {currency} {payroll:,.0f}")
 
-    st.subheader("Forecasted Financials")
-    st.write(f"**Rental (Budget/Estimate - Next Year):** {currency} {rental_estimate:,.2f}")
-    st.write(f"**Annual Turnover (Forecast):** {currency} {annual_turnover:,.2f}")
-    st.write(f"**Annual Gross Profit:** {currency} {gross_profit_calc:,.2f}")
+    st.subheader("📊 Forecasted Financials")
+    st.write(f"**Rental (Budget/Estimate - Next Year):** {currency} {rental_estimate:,.0f}")
+    st.write(f"**Annual Turnover (Forecast):** {currency} {annual_turnover:,.0f}")
+    st.write(f"**Annual Gross Profit:** {currency} {gross_profit_calc:,.0f}")
 
-    # ---------------- Fill Word Template ----------------
+    # ---------------- Word Document Generation ----------------
     doc = Document("Insurance Template.docx")
-
-    # Update "All values are in ..."
+    # Update currency in header
     for para in doc.paragraphs:
         if "All values are in" in para.text:
             para.text = f"Please see the answers in blue below. All values are in {currency} and sq ft."
 
-    # Fill in values
-    for para in doc.paragraphs:
-        text = para.text
-        if "Number of employees" in text:
-            para.text = f"• Number of employees that will be employed at this location (additional if any) {fte} FTE’s."
-        elif "3.3 Annual turnover" in text:
-            para.text = f"3.3 Annual turnover\t\tCurrency: {currency}"
-        elif "Current Year Forecast" in text and "turnover" in doc.paragraphs[doc.paragraphs.index(para)-1].text.lower():
-            para.text = f"Current Year Forecast\t\t${annual_turnover:,.0f}"
-        elif "3.4 Annual gross profit" in text:
-            continue
-        elif "Current Year Forecast" in text and "gross profit" in doc.paragraphs[doc.paragraphs.index(para)-1].text.lower():
-            para.text = f"Current Year Forecast\t\t${gross_profit_calc:,.0f}"
-        elif "3.5 Rental" in text:
-            continue
-        elif "Budget/Estimate - Next Year" in text:
-            para.text = f"Budget/Estimate - Next Year\t\t${rental_estimate:,.0f}"
-        elif "3.6 Staff data" in text:
-            continue
-        elif "Estimated Annual Payroll" in text:
-            para.text = f"Estimated Annual Payroll (Gross)\t\t${payroll:,.0f}"
+    # Helper to insert blue text
+    def insert_blue_text(para, value):
+        para.clear()
+        run = para.add_run(str(value))
+        run.font.color.rgb = RGBColor(0,0,255)
 
-    # Save to memory
+    for para in doc.paragraphs:
+        text = para.text.lower()
+        if "multi-tenanted" in text:
+            insert_blue_text(para, multi_tenanted)
+        elif "approximate age" in text:
+            insert_blue_text(para, f"{building_age} years")
+        elif "total number of floors" in text:
+            insert_blue_text(para, num_floors)
+        elif "number of employees" in text:
+            insert_blue_text(para, f"{fte} FTE’s")
+        elif "3.3 annual turnover" in text:
+            continue
+        elif "current year forecast" in text and "turnover" in doc.paragraphs[doc.paragraphs.index(para)-1].text.lower():
+            insert_blue_text(para, f"${annual_turnover:,.0f}")
+        elif "3.4 annual gross profit" in text:
+            continue
+        elif "current year forecast" in text and "gross profit" in doc.paragraphs[doc.paragraphs.index(para)-1].text.lower():
+            insert_blue_text(para, f"${gross_profit_calc:,.0f}")
+        elif "3.5 rental" in text:
+            continue
+        elif "budget/estimate" in text:
+            insert_blue_text(para, f"${rental_estimate:,.0f}")
+        elif "estimated annual payroll" in text:
+            insert_blue_text(para, f"${payroll:,.0f}")
+
+    # Streamlit download
     doc_stream = BytesIO()
     doc.save(doc_stream)
     doc_stream.seek(0)
-
-    # Download button
     st.download_button(
-        label="Download Word Report",
+        label="📄 Download Word Report",
         data=doc_stream,
-        file_name="Insurance_Report_Filled.docx",
+        file_name=f"Insurance_Report_{address.replace(' ','_')}.docx",
         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     )
+
 else:
     st.info("Please fill in all fields to generate the report.")
