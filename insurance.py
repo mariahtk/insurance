@@ -20,7 +20,6 @@ hide_streamlit_style = """
 """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-# Inputs
 address = st.text_input(" Building Address")
 currency = st.selectbox(" Currency", ["CAD", "USD"])
 sqft = st.number_input(" Building Square Footage", min_value=0.0, value=0.0)
@@ -119,11 +118,9 @@ def geocode_address(address):
         resp.raise_for_status()
         data = resp.json()
         if data:
-            lat = data[0]["lat"]
-            lon = data[0]["lon"]
-            return float(lat), float(lon)
-    except Exception as e:
-        st.error(f"Error geocoding address: {e}")
+            return float(data[0]["lat"]), float(data[0]["lon"])
+    except:
+        return None, None
     return None, None
 
 def get_building_floors_osm(lat, lon):
@@ -150,30 +147,21 @@ def get_building_floors_osm(lat, lon):
                 floors_str = tags["building:levels"]
                 floors = int(re.findall(r'\d+', floors_str)[0])
                 return floors
-    except Exception as e:
-        st.error(f"Error querying Overpass API: {e}")
+    except:
+        return None
     return None
 
 # --- Generate Report ---
 if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
 
-    # Multi-tenanted default logic
-    multi_tenanted = multi_tenanted_input if multi_tenanted_input != "Unknown" else "Yes"
-
-    # Building age
-    building_age = building_age_input if building_age_input > 0 else random.randint(20, 50)
-
-    # Floors
     lat, lon = geocode_address(address)
     osm_floors = get_building_floors_osm(lat, lon)
-    if num_floors_input > 0:
-        num_floors = int(num_floors_input)
-    elif osm_floors:
-        num_floors = osm_floors
-    else:
-        num_floors = max(1, int(sqft // 10000))
 
-    # Payroll & FTE
+    multi_tenanted = multi_tenanted_input if multi_tenanted_input != "Unknown" else "Yes"
+    building_age = building_age_input if building_age_input > 0 else random.randint(20, 50)
+    num_floors = int(num_floors_input) if num_floors_input > 0 else (osm_floors if osm_floors else max(1, int(sqft // 10000)))
+
+    # Payroll & FTE logic
     if extracted_payroll is None:
         if sqft < 10000:
             fte = 0.5
@@ -189,24 +177,18 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
             payroll = 110000
     else:
         payroll = extracted_payroll
-        fte = None if extracted_payroll is not None else fte
+        fte = 1.0 if payroll else None
 
     rental_estimate = extracted_rental if extracted_rental is not None else sqft * market_rent
-
-    if extracted_turnover is not None:
-        annual_turnover = extracted_turnover
-    elif rental_estimate is not None and rental_estimate > 0:
-        annual_turnover = rental_estimate / DEFAULT_OCR
-    else:
-        annual_turnover = (sqft * market_rent) / DEFAULT_OCR if sqft > 0 and market_rent > 0 else None
-
+    annual_turnover = extracted_turnover if extracted_turnover is not None else (rental_estimate / DEFAULT_OCR if rental_estimate else None)
     gross_profit_calc = annual_turnover - rental_estimate if annual_turnover and rental_estimate else None
 
+    # Display
     st.subheader("🏗 Building Information")
     st.write(f"**Address:** {address}")
     st.write(f"**Multi-tenanted:** {multi_tenanted}")
     st.write(f"**Approximate Age:** {building_age} years")
-    st.write(f"**Total Floors (excl. basement):** {num_floors}")
+    st.write(f"**Total Floors:** {num_floors}")
 
     st.subheader("Employment Estimate")
     st.write(f"**Estimated FTEs:** {fte}")
@@ -214,10 +196,10 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
 
     st.subheader("Forecasted Financials")
     st.write(f"**Rental (Budget/Estimate - Next Year):** {currency} {rental_estimate:,.2f}")
-    st.write(f"**Annual Turnover (Forecast):** {currency} {annual_turnover:,.2f}" if annual_turnover else "Annual Turnover: N/A")
-    st.write(f"**Annual Gross Profit:** {currency} {gross_profit_calc:,.2f}" if gross_profit_calc else "Gross Profit: N/A")
+    st.write(f"**Annual Turnover (Forecast):** {currency} {annual_turnover:,.2f}")
+    st.write(f"**Annual Gross Profit (calculated):** {currency} {gross_profit_calc:,.2f}")
 
-    # --- Generate Word document ---
+    # --- Generate Word Document ---
     doc = Document("Insurance Template.docx")
 
     # Update currency line
@@ -225,7 +207,7 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
         if "All values are in" in para.text:
             para.text = f"Please see the answers in blue below. All values are in {currency} and sq ft."
 
-    # Add inline answers in blue
+    # Fill main questions in blue
     for para in doc.paragraphs:
         if "Is building multi- tenanted" in para.text:
             run = para.add_run(f" {multi_tenanted}")
@@ -240,28 +222,29 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
             run = para.add_run(f" {fte}")
             run.font.color.rgb = RGBColor(0, 0, 255)
 
-    # Replace $ placeholders in tables
+    # Fill table placeholders
     for table in doc.tables:
         for row in table.rows:
-            for cell in row.cells:
-                if "$" in cell.text:
-                    if "Annual turnover" in row.cells[0].text:
-                        cell.text = f"{currency} {annual_turnover:,.2f}"
-                    elif "Annual gross profit" in row.cells[0].text:
-                        cell.text = f"{currency} {gross_profit_calc:,.2f}"
-                    elif "Rental" in row.cells[0].text:
-                        cell.text = f"{currency} {rental_estimate:,.2f}"
-                    elif "Estimated Annual Payroll" in row.cells[0].text:
-                        cell.text = f"{currency} {payroll:,.2f}"
+            first_cell_text = row.cells[0].text.lower()
+            if "$" in row.cells[1].text or "$" in row.cells[0].text:
+                if "annual turnover" in first_cell_text:
+                    row.cells[1].text = f"{currency} {annual_turnover:,.2f}"
+                elif "annual gross profit" in first_cell_text:
+                    row.cells[1].text = f"{currency} {gross_profit_calc:,.2f}"
+                elif "rental" in first_cell_text:
+                    row.cells[1].text = f"{currency} {rental_estimate:,.2f}"
+                elif "estimated annual payroll" in first_cell_text:
+                    row.cells[1].text = f"{currency} {payroll:,.2f}"
 
-    # Prepare download
-    bio = BytesIO()
-    doc.save(bio)
-    bio.seek(0)
+    # Output Word file
+    buffer = BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+
     st.download_button(
-        label="📄 Download Word Report",
-        data=bio,
-        file_name=f"Insurance_Report_{address.replace(' ', '_')}.docx",
+        label="📄 Download Filled Insurance Report",
+        data=buffer,
+        file_name="Insurance_Report_Filled.docx",
         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     )
 else:
