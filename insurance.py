@@ -5,11 +5,12 @@ import re
 import pandas as pd
 import requests
 from docx import Document
+from docx.shared import RGBColor
 from io import BytesIO
 
 st.title("🏢 Insurance Report Generator")
 
-# Hide GitHub icon and hamburger menu
+# Hide Streamlit footer and menu
 hide_streamlit_style = """
     <style>
     #MainMenu {visibility: hidden;}
@@ -19,11 +20,10 @@ hide_streamlit_style = """
 """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-# --- User Inputs ---
-address = st.text_input(" Building Address")
-currency = st.selectbox(" Currency", ["CAD", "USD"])
-sqft = st.number_input(" Building Square Footage", min_value=0.0, value=0.0)
-market_rent = st.number_input(f" Market Rent ({currency} / sqft)", min_value=0.0, value=0.0)
+address = st.text_input("Building Address", value="NJ, Newark - 3 Gateway Center")
+currency = st.selectbox("Currency", ["CAD", "USD"])
+sqft = st.number_input("Building Square Footage", min_value=0.0, value=0.0)
+market_rent = st.number_input(f"Market Rent ({currency} / sqft)", min_value=0.0, value=0.0)
 
 st.markdown("---")
 st.subheader("Optional manual overrides (if OSM data is missing or unavailable)")
@@ -99,19 +99,23 @@ def extract_from_pdf(pdf_file):
         rental = headline_rent * rentable_area
     return payroll, rental, turnover
 
-# --- Process PDF ---
 if pdf_file is not None:
     extracted_payroll, extracted_rental, extracted_turnover = extract_from_pdf(pdf_file)
 else:
     extracted_payroll, extracted_rental, extracted_turnover = None, None, None
 
-# --- Calculations ---
+if pdf_file:
+    st.markdown("### Extracted values from uploaded file:")
+    st.write(f"**Estimated Annual Payroll:** {extracted_payroll if extracted_payroll is not None else 'Not found'}")
+    st.write(f"**Rental (Budget/Estimate - Next Year):** {extracted_rental if extracted_rental is not None else 'Not found'}")
+    st.write(f"**Annual Turnover (Forecast):** {extracted_turnover if extracted_turnover is not None else 'Not found'}")
+
 if extracted_turnover is not None and extracted_rental is not None:
     gross_profit = extracted_turnover - extracted_rental
 else:
     gross_profit = None
 
-# --- OSM functions ---
+# --- OSM Geocoding and Overpass API ---
 def geocode_address(address):
     url = "https://nominatim.openstreetmap.org/search"
     params = {"q": address, "format": "json", "limit": 1}
@@ -120,9 +124,11 @@ def geocode_address(address):
         resp.raise_for_status()
         data = resp.json()
         if data:
-            return float(data[0]["lat"]), float(data[0]["lon"])
-    except:
-        return None, None
+            lat = data[0]["lat"]
+            lon = data[0]["lon"]
+            return float(lat), float(lon)
+    except Exception as e:
+        st.error(f"Error geocoding address: {e}")
     return None, None
 
 def get_building_floors_osm(lat, lon):
@@ -149,17 +155,16 @@ def get_building_floors_osm(lat, lon):
                 floors_str = tags["building:levels"]
                 floors = int(re.findall(r'\d+', floors_str)[0])
                 return floors
-    except:
-        return None
+    except Exception as e:
+        st.error(f"Error querying Overpass API: {e}")
     return None
 
 # --- Generate Report ---
 if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
-
     lat, lon = geocode_address(address)
     osm_floors = get_building_floors_osm(lat, lon)
 
-    # Multi-tenanted logic
+    # Multi-tenanted
     multi_tenanted = multi_tenanted_input if multi_tenanted_input != "Unknown" else "Yes"
 
     # Building age
@@ -189,70 +194,67 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
             payroll = 110000
     else:
         payroll = extracted_payroll
-        fte = 1 if extracted_payroll else None
+        fte = None
 
-    # Rental & Turnover
     rental_estimate = extracted_rental if extracted_rental is not None else sqft * market_rent
-    if extracted_turnover is not None:
-        annual_turnover = extracted_turnover
-    else:
-        annual_turnover = rental_estimate / DEFAULT_OCR if rental_estimate else (sqft * market_rent)/DEFAULT_OCR
-    gross_profit_calc = annual_turnover - rental_estimate if annual_turnover and rental_estimate else 0
+    annual_turnover = extracted_turnover if extracted_turnover is not None else (rental_estimate / DEFAULT_OCR if rental_estimate else None)
+    gross_profit_calc = annual_turnover - rental_estimate if annual_turnover and rental_estimate else None
 
-    # Display UI results
+    # --- Display in Streamlit ---
     st.subheader("🏗 Building Information")
     st.write(f"**Address:** {address}")
     st.write(f"**Multi-tenanted:** {multi_tenanted}")
     st.write(f"**Approximate Age:** {building_age} years")
     st.write(f"**Total Floors (excl. basement):** {num_floors}")
 
-    st.subheader(" Employment Estimate")
-    st.write(f"**Number of Employees (FTEs):** {fte}")
+    st.subheader("Employment Estimate")
+    st.write(f"**Number of employees (FTE):** {fte if fte else 'N/A'}")
     st.write(f"**Estimated Annual Payroll:** {currency} {payroll:,.2f}")
 
-    st.subheader(" Forecasted Financials")
-    st.write(f"**Annual Turnover:** {currency} {annual_turnover:,.2f}")
-    st.write(f"**Annual Gross Profit:** {currency} {gross_profit_calc:,.2f}")
-    st.write(f"**Rental Estimate:** {currency} {rental_estimate:,.2f}")
+    st.subheader("Forecasted Financials")
+    st.write(f"**Annual Turnover:** {currency} {annual_turnover:,.2f}" if annual_turnover else "Annual Turnover: N/A")
+    st.write(f"**Annual Gross Profit:** {currency} {gross_profit_calc:,.2f}" if gross_profit_calc else "N/A")
+    st.write(f"**Rental (Budget/Estimate - Next Year):** {currency} {rental_estimate:,.2f}")
 
-    # --- Fill Word template ---
+    # --- Fill Word Template ---
     doc = Document("Insurance Template.docx")
 
-    # Fill answers above table
+    # Update "All values are in..."
     for paragraph in doc.paragraphs:
-        text = paragraph.text
-        if "Is building multi- tenanted" in text:
-            paragraph.add_run(f" {multi_tenanted}").font.color.rgb = (0, 0, 255)
-        elif "Approximate age of the building" in text:
-            paragraph.add_run(f" {building_age}").font.color.rgb = (0, 0, 255)
-        elif "Total number of floors" in text:
-            paragraph.add_run(f" {num_floors}").font.color.rgb = (0, 0, 255)
-        elif "Number of employees" in text:
-            paragraph.add_run(f" {fte}").font.color.rgb = (0, 0, 255)
-        elif "All values are in" in text:
-            paragraph.text = f"All values are in {currency} and sq ft."
+        if "All values are in" in paragraph.text:
+            paragraph.text = f"Please see the answers in blue below. All values are in {currency} and sq ft."
 
-    # Fill table placeholders with $ values
+    # Update the questions above table
+    for paragraph in doc.paragraphs:
+        if "Is building multi- tenanted" in paragraph.text:
+            paragraph.add_run(f" {multi_tenanted}").font.color.rgb = RGBColor(0, 0, 255)
+        if "Approximate age of the building" in paragraph.text:
+            paragraph.add_run(f" {building_age} years").font.color.rgb = RGBColor(0, 0, 255)
+        if "Total number of floors" in paragraph.text:
+            paragraph.add_run(f" {num_floors}").font.color.rgb = RGBColor(0, 0, 255)
+        if "Number of employees will be employed" in paragraph.text:
+            paragraph.add_run(f" {fte if fte else 'N/A'}").font.color.rgb = RGBColor(0, 0, 255)
+
+    # Update the table values with $ placeholders
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
                 if "$" in cell.text:
-                    first_cell_text = row.cells[0].text.lower()
-                    if "annual turnover" in first_cell_text:
+                    if "Annual turnover" in row.cells[0].text:
                         cell.text = f"{currency} {annual_turnover:,.2f}"
-                    elif "annual gross profit" in first_cell_text:
+                    elif "Annual gross profit" in row.cells[0].text:
                         cell.text = f"{currency} {gross_profit_calc:,.2f}"
-                    elif "rental" in first_cell_text:
+                    elif "Rental" in row.cells[0].text:
                         cell.text = f"{currency} {rental_estimate:,.2f}"
-                    elif "estimated annual payroll" in first_cell_text:
+                    elif "Staff data" in row.cells[0].text:
                         cell.text = f"{currency} {payroll:,.2f}"
 
-    # Provide download
-    output_stream = BytesIO()
-    doc.save(output_stream)
+    # Save to BytesIO and allow download
+    output = BytesIO()
+    doc.save(output)
     st.download_button(
-        label="📄 Download Word Report",
-        data=output_stream.getvalue(),
+        label="Download Word Report",
+        data=output.getvalue(),
         file_name="Insurance_Report.docx",
         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     )
