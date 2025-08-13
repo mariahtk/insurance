@@ -9,21 +9,20 @@ from io import BytesIO
 
 st.title("🏢 Insurance Report Generator")
 
-# Hide GitHub icon and hamburger menu
-hide_streamlit_style = """
+# Hide Streamlit UI elements
+st.markdown("""
     <style>
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header > div:nth-child(1) {visibility: hidden;}
     </style>
-"""
-st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
-# --- User inputs ---
-address = st.text_input(" Building Address")
-currency = st.selectbox(" Currency", ["CAD", "USD"])
-sqft = st.number_input(" Building Square Footage", min_value=0.0, value=0.0)
-market_rent = st.number_input(f" Market Rent ({currency} / sqft)", min_value=0.0, value=0.0)
+# Input fields
+address = st.text_input("Building Address")
+currency = st.selectbox("Currency", ["CAD", "USD"])
+sqft = st.number_input("Building Square Footage", min_value=0.0, value=0.0)
+market_rent = st.number_input(f"Market Rent ({currency} / sqft)", min_value=0.0, value=0.0)
 
 st.markdown("---")
 st.subheader("Optional manual overrides (if OSM data is missing or unavailable)")
@@ -35,9 +34,9 @@ st.markdown("---")
 st.subheader("📄 Upload Insurance Report PDF file")
 pdf_file = st.file_uploader("Upload PDF", type=["pdf"])
 
-DEFAULT_OCR = 0.20  # 20% fallback Occupancy Cost Ratio
+DEFAULT_OCR = 0.20  # fallback Occupancy Cost Ratio
 
-# --- Extraction functions ---
+# --- PDF extraction functions ---
 def extract_value_flexible(table, key_phrase, target_number_index=1):
     key_phrase = key_phrase.lower()
     for row in table:
@@ -99,23 +98,7 @@ def extract_from_pdf(pdf_file):
         rental = headline_rent * rentable_area
     return payroll, rental, turnover
 
-if pdf_file is not None:
-    extracted_payroll, extracted_rental, extracted_turnover = extract_from_pdf(pdf_file)
-else:
-    extracted_payroll, extracted_rental, extracted_turnover = None, None, None
-
-if pdf_file:
-    st.markdown("### Extracted values from uploaded file:")
-    st.write(f"**Estimated Annual Payroll:** {extracted_payroll if extracted_payroll is not None else 'Not found'}")
-    st.write(f"**Rental (Budget/Estimate - Next Year):** {extracted_rental if extracted_rental is not None else 'Not found'}")
-    st.write(f"**Annual Turnover (Forecast):** {extracted_turnover if extracted_turnover is not None else 'Not found'}")
-
-if extracted_turnover is not None and extracted_rental is not None:
-    gross_profit = extracted_turnover - extracted_rental
-else:
-    gross_profit = None
-
-# --- OSM Geocoding and Overpass API functions ---
+# --- OSM functions ---
 def geocode_address(address):
     url = "https://nominatim.openstreetmap.org/search"
     params = {"q": address, "format": "json", "limit": 1}
@@ -156,28 +139,23 @@ def get_building_floors_osm(lat, lon):
         st.error(f"Error querying Overpass API: {e}")
     return None
 
-# --- Generate report ---
+# --- Process and display report ---
 if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
 
-    # OSM floors
+    # Extract data from PDF
+    if pdf_file:
+        extracted_payroll, extracted_rental, extracted_turnover = extract_from_pdf(pdf_file)
+    else:
+        extracted_payroll, extracted_rental, extracted_turnover = None, None, None
+
+    # Floors and building info
     lat, lon = geocode_address(address)
     osm_floors = get_building_floors_osm(lat, lon)
-
-    # Multi-tenanted logic: default Yes
     multi_tenanted = multi_tenanted_input if multi_tenanted_input != "Unknown" else "Yes"
+    building_age = building_age_input if building_age_input > 0 else random.randint(20, 50)
+    num_floors = num_floors_input if num_floors_input > 0 else (osm_floors if osm_floors else max(1, int(sqft // 10000)))
 
-    # Building age
-    building_age = building_age_input if building_age_input > 0 else random.randint(20,50)
-
-    # Floors
-    if num_floors_input > 0:
-        num_floors = int(num_floors_input)
-    elif osm_floors:
-        num_floors = osm_floors
-    else:
-        num_floors = max(1, int(sqft // 10000))
-
-    # Payroll and FTE
+    # Payroll and FTE calculation (always show FTE)
     if extracted_payroll is None:
         if sqft < 10000:
             fte = 0.5
@@ -193,72 +171,74 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
             payroll = 110000
     else:
         payroll = extracted_payroll
-        fte = None
+        if payroll < 60000:
+            fte = 0.5
+        elif payroll < 80000:
+            fte = 1.0
+        elif payroll < 120000:
+            fte = 1.5
+        else:
+            fte = 2.0
 
     rental_estimate = extracted_rental if extracted_rental is not None else sqft * market_rent
-    annual_turnover = extracted_turnover if extracted_turnover else (rental_estimate / DEFAULT_OCR if rental_estimate else (sqft*market_rent)/DEFAULT_OCR)
+    annual_turnover = extracted_turnover if extracted_turnover else (rental_estimate / DEFAULT_OCR if rental_estimate else None)
     gross_profit_calc = (annual_turnover - rental_estimate) if annual_turnover and rental_estimate else None
 
-    # --- Display results ---
+    # Display in UI
     st.subheader("🏗 Building Information")
     st.write(f"**Address:** {address}")
     st.write(f"**Multi-tenanted:** {multi_tenanted}")
     st.write(f"**Approximate Age:** {building_age} years")
     st.write(f"**Total Floors (excl. basement):** {num_floors}")
 
-    st.subheader(" Employment Estimate")
-    if extracted_payroll is not None:
-        st.write(f"**Estimated Annual Payroll (from file):** {currency} {payroll:,.2f}")
-        if fte is not None:
-            st.write(f"**Estimated FTEs:** {fte}")
-    else:
-        st.write(f"**Estimated FTEs:** {fte}")
-        st.write(f"**Estimated Annual Payroll:** {currency} {payroll:,.2f}")
+    st.subheader("👷 Employment Estimate")
+    st.write(f"**Estimated FTEs:** {fte}")
+    st.write(f"**Estimated Annual Payroll:** {currency} {payroll:,.2f}")
 
-    st.subheader(" Forecasted Financials")
+    st.subheader("💰 Forecasted Financials")
     st.write(f"**Rental (Budget/Estimate - Next Year):** {currency} {rental_estimate:,.2f}")
-    st.write(f"**Annual Turnover (Forecast):** {currency} {annual_turnover:,.2f}")
+    st.write(f"**Annual Turnover (Forecast):** {currency} {annual_turnover:,.2f}" if annual_turnover else "Annual Turnover: N/A")
     st.write(f"**Annual Gross Profit:** {currency} {gross_profit_calc:,.2f}" if gross_profit_calc else "Gross Profit: N/A")
 
-    # --- Word report generation ---
-    def generate_word_report():
-        template_path = "Insurance Template.docx"
-        doc = Document(template_path)
-        # Replace currency line
-        for paragraph in doc.paragraphs:
-            if "All values are in and sq ft." in paragraph.text:
-                paragraph.text = f"Please see the answers in blue below. All values are in {currency} and sq ft."
+    # --- Generate Word report ---
+    try:
+        doc = Document("Insurance Template.docx")
 
-        replacements = {
-            "Is building multi- tenanted (Yes) or 100% let to IWG (No)?": multi_tenanted,
-            "Approximate age of the building?": f"{building_age} years",
-            "Total number of floors of the building (excluding basement)?": num_floors,
-            "Number of employees will be employed at this location:": fte if fte is not None else "N/A",
-            "Estimated Annual Payroll (Gross)": f"{currency} {payroll:,.2f}",
-            "Budget/Estimate - Next Year": f"{currency} {rental_estimate:,.2f}",
-            "Current Year Forecast": f"{currency} {annual_turnover:,.2f}",
-            "Annual gross profit": f"{currency} {gross_profit_calc:,.2f}" if gross_profit_calc else "N/A"
+        # Update currency in header line
+        for para in doc.paragraphs:
+            if "All values are in" in para.text:
+                para.text = f"Please see the answers in blue below. All values are in {currency} and sq ft."
+
+        # Fill in values
+        mapping = {
+            "Is building multi- tenanted": multi_tenanted,
+            "Approximate age of the building": f"{building_age} years",
+            "Total number of floors of the building": num_floors,
+            "Number of employees will be employed at this location": fte,
+            "3.3 Annual turnover": f"{annual_turnover:,.2f}" if annual_turnover else "N/A",
+            "3.4 Annual gross profit": f"{gross_profit_calc:,.2f}" if gross_profit_calc else "N/A",
+            "13.5 Rental": f"{rental_estimate:,.2f}",
+            "Estimated Annual Payroll (Gross)": f"{payroll:,.2f}"
         }
 
-        for paragraph in doc.paragraphs:
-            for key, value in replacements.items():
-                if key in paragraph.text:
-                    paragraph.text = paragraph.text.replace(key, str(value))
+        for para in doc.paragraphs:
+            for key, val in mapping.items():
+                if key in para.text:
+                    para.add_run(f" {val}")
 
-        buffer = BytesIO()
-        doc.save(buffer)
-        buffer.seek(0)
-        return buffer
+        # Save to in-memory file
+        doc_stream = BytesIO()
+        doc.save(doc_stream)
+        doc_stream.seek(0)
 
-    if st.button("Generate Word Report"):
-        word_buffer = generate_word_report()
-        st.success("Word report generated successfully!")
         st.download_button(
-            label="Download Word Report",
-            data=word_buffer,
-            file_name="Insurance_Report.docx",
+            label="📄 Download Word Report",
+            data=doc_stream,
+            file_name=f"Insurance_Report_{address.replace(' ', '_')}.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
+    except Exception as e:
+        st.error(f"Error generating Word report: {e}")
 
 else:
     st.info("Please fill in all fields to generate the report.")
