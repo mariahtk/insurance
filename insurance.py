@@ -39,7 +39,7 @@ DEFAULT_OCR = 0.20  # fallback Occupancy Cost Ratio
 # --------------------- LOAD GLOBAL PRICING ---------------------
 @st.cache_data
 def load_global_pricing():
-    file_path = "Global Pricing.xlsx"  # must exist in repo
+    file_path = "Global_Pricing.xlsx"  # must exist in repo
     market_rent_df = pd.read_excel(file_path, sheet_name="Market Rent")
     usa_df = pd.read_excel(file_path, sheet_name="USA")
     canada_df = pd.read_excel(file_path, sheet_name="Canada")
@@ -243,3 +243,4 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
 
     except Exception as e:
         st.error(f"Error generating Word document: {e}")
+
