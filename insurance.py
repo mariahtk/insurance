@@ -37,7 +37,7 @@ DEFAULT_OCR = 0.20  # 20% fallback Occupancy Cost Ratio
 
 # --------------------- LOAD GLOBAL PRICING ---------------------
 @st.cache_data
-def load_global_pricing(file_path="Global_Pricing.xlsx"):
+def load_global_pricing(file_path="Global Pricing.xlsx"):
     market_rent_df = pd.read_excel(file_path, sheet_name="Market Rent")
     usa_df = pd.read_excel(file_path, sheet_name="USA")
     canada_df = pd.read_excel(file_path, sheet_name="Canada")
