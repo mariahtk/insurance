@@ -39,7 +39,7 @@ DEFAULT_OCR = 0.20  # fallback Occupancy Cost Ratio
 # --------------------- LOAD GLOBAL PRICING ---------------------
 @st.cache_data
 def load_global_pricing():
-    file_path = "Global_Pricing.xlsx"  # must exist in repo
+    file_path = "Global_Pricing.xlsx"  # Must exist in repo
     market_rent_df = pd.read_excel(file_path, sheet_name="Market Rent")
     usa_df = pd.read_excel(file_path, sheet_name="USA")
     canada_df = pd.read_excel(file_path, sheet_name="Canada")
@@ -152,18 +152,12 @@ market_rent = get_market_rent_from_address(address)
 # --------------------- GENERATE REPORT ---------------------
 if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
 
-    # Multi-tenanted logic
     multi_tenanted = multi_tenanted_input if multi_tenanted_input != "Unknown" else "Yes"
-
-    # Building age
     building_age = building_age_input if building_age_input > 0 else random.randint(20,50)
     current_year = datetime.now().year
     built_year = current_year - building_age
-
-    # Floors
     num_floors = num_floors_input if num_floors_input > 0 else max(1, int(sqft // 10000))
 
-    # Payroll / FTE
     if extracted_payroll is None:
         if sqft < 10000:
             fte = 0.5
@@ -181,12 +175,10 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
         payroll = extracted_payroll
         fte = round(payroll / 55000,1)
 
-    # Rental / turnover
     rental_estimate = extracted_rental if extracted_rental is not None else sqft * market_rent
     annual_turnover = extracted_turnover if extracted_turnover is not None else (rental_estimate / DEFAULT_OCR)
     gross_profit_calc = annual_turnover - rental_estimate if annual_turnover and rental_estimate else None
 
-    # --------------------- DISPLAY ---------------------
     st.subheader("🏗 Building Information")
     st.write(f"**Address:** {address}")
     st.write(f"**Multi-tenanted:** {multi_tenanted}")
@@ -202,7 +194,6 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
     st.write(f"**Annual Turnover (Forecast):** {currency} {annual_turnover:,.2f}")
     st.write(f"**Annual Gross Profit (calculated):** {currency} {gross_profit_calc:,.2f}")
 
-    # --------------------- GENERATE WORD DOC ---------------------
     try:
         doc = Document("Insurance Template.docx")
 
@@ -243,4 +234,3 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
 
     except Exception as e:
         st.error(f"Error generating Word document: {e}")
-
