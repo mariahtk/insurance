@@ -3,28 +3,27 @@ import random
 import pdfplumber
 import re
 import pandas as pd
-import requests
 from docx import Document
 from docx.shared import RGBColor
 from io import BytesIO
+from geopy.distance import geodesic  # For closest centre matching
 
 st.title("🏢 Insurance Report Generator")
 
 # Hide Streamlit menu/footer
-hide_streamlit_style = """
-    <style>
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    header > div:nth-child(1) {visibility: hidden;}
-    </style>
-"""
-st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+st.markdown("""
+<style>
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+header > div:nth-child(1) {visibility: hidden;}
+</style>
+""", unsafe_allow_html=True)
 
 # --------------------- INPUTS ---------------------
-address = st.text_input(" Building Address", "NJ, Newark - 3 Gateway Center")
-currency = st.selectbox(" Currency", ["CAD", "USD"])
-sqft = st.number_input(" Building Square Footage", min_value=0.0, value=20000.0)
-market_rent = st.number_input(f" Market Rent ({currency} / sqft)", min_value=0.0, value=50.0)
+address = st.text_input("Building Address", "NJ, Newark - 3 Gateway Center")
+currency = st.selectbox("Currency", ["CAD", "USD"])
+sqft = st.number_input("Building Square Footage", min_value=0.0, value=20000.0)
+market_rent_input = st.number_input(f"Market Rent ({currency} / sqft)", min_value=0.0, value=50.0)
 
 st.markdown("---")
 st.subheader("Optional manual overrides (if OSM data is missing or unavailable)")
@@ -38,7 +37,43 @@ pdf_file = st.file_uploader("Upload PDF", type=["pdf"])
 
 DEFAULT_OCR = 0.20  # 20% fallback Occupancy Cost Ratio
 
+# --------------------- LOAD GLOBAL PRICING ---------------------
+@st.cache_data
+def load_global_pricing(file_path="Global_Pricing.xlsx"):
+    market_rent_df = pd.read_excel(file_path, sheet_name="Market Rent")
+    centres_df = pd.read_excel(file_path, sheet_name="Centres")  # Must have Latitude/Longitude per centre
+    return market_rent_df, centres_df
+
+market_rent_df, centres_df = load_global_pricing()
+
+# --------------------- MARKET RENT CALCULATION ---------------------
+def get_address_coords(address):
+    # Replace with actual geocoding if needed
+    return (40.7357, -74.1724)  # Example: Newark, NJ
+
+def get_market_rent_from_address(address):
+    addr_coords = get_address_coords(address)
+    centres_df["distance"] = centres_df.apply(lambda x: geodesic(addr_coords, (x["Latitude"], x["Longitude"])).miles, axis=1)
+    nearest_centres = centres_df.nsmallest(3, "distance")["Centre #"].tolist()
+    rent_values = market_rent_df[market_rent_df["Centre #"].isin(nearest_centres)]["Market Rate"].tolist()
+    if rent_values:
+        return sum(rent_values) / len(rent_values)
+    return 50.0  # fallback
+
 # --------------------- PDF EXTRACTION ---------------------
+def extract_gross_area_from_pdf(pdf_file):
+    with pdfplumber.open(pdf_file) as pdf:
+        for page in pdf.pages:
+            text = page.extract_text()
+            if text:
+                match = re.search(r"Gross Area sqft\s*[:\s]\s*([\d,\.]+)", text, re.IGNORECASE)
+                if match:
+                    try:
+                        return float(match.group(1).replace(',', ''))
+                    except:
+                        continue
+    return None
+
 def extract_value_flexible(table, key_phrase, target_number_index=1):
     key_phrase = key_phrase.lower()
     for row in table:
@@ -72,6 +107,7 @@ def extract_from_pdf(pdf_file):
     turnover = None
     headline_rent = None
     rentable_area = None
+    building_sqft_pdf = extract_gross_area_from_pdf(pdf_file)
     with pdfplumber.open(pdf_file) as pdf:
         all_tables = []
         for page in pdf.pages:
@@ -98,12 +134,18 @@ def extract_from_pdf(pdf_file):
     rental = None
     if headline_rent is not None and rentable_area is not None:
         rental = headline_rent * rentable_area
-    return payroll, rental, turnover
+    return payroll, rental, turnover, building_sqft_pdf
 
+# --------------------- EXTRACT PDF DATA ---------------------
 if pdf_file is not None:
-    extracted_payroll, extracted_rental, extracted_turnover = extract_from_pdf(pdf_file)
+    extracted_payroll, extracted_rental, extracted_turnover, pdf_sqft = extract_from_pdf(pdf_file)
+    if pdf_sqft:
+        sqft = pdf_sqft
 else:
     extracted_payroll, extracted_rental, extracted_turnover = None, None, None
+
+# --------------------- UPDATE MARKET RENT ---------------------
+market_rent = get_market_rent_from_address(address)
 
 # --------------------- GENERATE REPORT ---------------------
 if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
@@ -147,11 +189,11 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
     st.write(f"**Approximate Age:** {building_age} years")
     st.write(f"**Total Floors:** {num_floors}")
 
-    st.subheader(" Employment Estimate")
+    st.subheader("Employment Estimate")
     st.write(f"**Estimated FTEs:** {fte}")
     st.write(f"**Estimated Annual Payroll:** {currency} {payroll:,.2f}")
 
-    st.subheader(" Forecasted Financials")
+    st.subheader("Forecasted Financials")
     st.write(f"**Rental (Budget/Estimate - Next Year):** {currency} {rental_estimate:,.2f}")
     st.write(f"**Annual Turnover (Forecast):** {currency} {annual_turnover:,.2f}")
     st.write(f"**Annual Gross Profit (calculated):** {currency} {gross_profit_calc:,.2f}")
