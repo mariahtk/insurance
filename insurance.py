@@ -34,24 +34,18 @@ st.markdown("---")
 st.subheader("📄 Upload Insurance Report PDF file")
 pdf_file = st.file_uploader("Upload PDF", type=["pdf"])
 
-st.markdown("---")
-st.subheader("📊 Upload Global Pricing Excel")
-pricing_file = st.file_uploader("Upload Global Pricing Excel", type=["xlsx"])
-
-DEFAULT_OCR = 0.20  # 20% fallback Occupancy Cost Ratio
+DEFAULT_OCR = 0.20  # fallback Occupancy Cost Ratio
 
 # --------------------- LOAD GLOBAL PRICING ---------------------
-if pricing_file is not None:
-    @st.cache_data
-    def load_global_pricing(uploaded_file):
-        market_rent_df = pd.read_excel(uploaded_file, sheet_name="Market Rent")
-        usa_df = pd.read_excel(uploaded_file, sheet_name="USA")
-        canada_df = pd.read_excel(uploaded_file, sheet_name="Canada")
-        return market_rent_df, usa_df, canada_df
+@st.cache_data
+def load_global_pricing():
+    file_path = "Global Pricing.xlsx"  # must exist in repo
+    market_rent_df = pd.read_excel(file_path, sheet_name="Market Rent")
+    usa_df = pd.read_excel(file_path, sheet_name="USA")
+    canada_df = pd.read_excel(file_path, sheet_name="Canada")
+    return market_rent_df, usa_df, canada_df
 
-    market_rent_df, usa_df, canada_df = load_global_pricing(pricing_file)
-else:
-    st.warning("Please upload the Global Pricing Excel file to calculate market rent.")
+market_rent_df, usa_df, canada_df = load_global_pricing()
 
 # --------------------- HELPER FUNCTIONS ---------------------
 def get_address_coords(address):
@@ -59,8 +53,6 @@ def get_address_coords(address):
     return (40.7357, -74.1724)  # Example: Newark, NJ
 
 def get_market_rent_from_address(address):
-    if pricing_file is None:
-        return 50.0  # fallback if no pricing file uploaded
     addr_coords = get_address_coords(address)
     combined_df = pd.concat([usa_df, canada_df], ignore_index=True)
     combined_df["distance"] = ((combined_df["Latitude"] - addr_coords[0])**2 +
@@ -217,9 +209,6 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
         for paragraph in doc.paragraphs:
             if "All values are in" in paragraph.text:
                 paragraph.text = f"Please see the answers in blue below. All values are in {currency} and sq ft."
-
-        # Fill answers to questions
-        for paragraph in doc.paragraphs:
             if "Is building multi- tenanted" in paragraph.text:
                 paragraph.add_run(f" {multi_tenanted}").font.color.rgb = RGBColor(0,0,255)
             if "Approximate age of the building" in paragraph.text:
@@ -229,7 +218,6 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
             if "Number of employees will be employed" in paragraph.text:
                 paragraph.add_run(f" {fte}").font.color.rgb = RGBColor(0,0,255)
 
-        # Fill table $ placeholders: turnover, gross profit, rental, payroll
         table_values = [annual_turnover, gross_profit_calc, rental_estimate, payroll]
         for table in doc.tables:
             val_idx = 0
@@ -242,7 +230,6 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
                                 run.font.color.rgb = RGBColor(0,0,255)
                         val_idx += 1
 
-        # Save Word doc to BytesIO
         output = BytesIO()
         doc.save(output)
         output.seek(0)
