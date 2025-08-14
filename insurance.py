@@ -6,7 +6,6 @@ import pandas as pd
 from docx import Document
 from docx.shared import RGBColor
 from io import BytesIO
-from geopy.distance import geodesic  # For closest centre matching
 
 st.title("🏢 Insurance Report Generator")
 
@@ -23,7 +22,6 @@ header > div:nth-child(1) {visibility: hidden;}
 address = st.text_input("Building Address", "NJ, Newark - 3 Gateway Center")
 currency = st.selectbox("Currency", ["CAD", "USD"])
 sqft = st.number_input("Building Square Footage", min_value=0.0, value=20000.0)
-market_rent_input = st.number_input(f"Market Rent ({currency} / sqft)", min_value=0.0, value=50.0)
 
 st.markdown("---")
 st.subheader("Optional manual overrides (if OSM data is missing or unavailable)")
@@ -39,28 +37,30 @@ DEFAULT_OCR = 0.20  # 20% fallback Occupancy Cost Ratio
 
 # --------------------- LOAD GLOBAL PRICING ---------------------
 @st.cache_data
-def load_global_pricing(file_path="Global Pricing.xlsx"):
+def load_global_pricing(file_path="Global_Pricing.xlsx"):
     market_rent_df = pd.read_excel(file_path, sheet_name="Market Rent")
-    centres_df = pd.read_excel(file_path, sheet_name="Centres")  # Must have Latitude/Longitude per centre
-    return market_rent_df, centres_df
+    usa_df = pd.read_excel(file_path, sheet_name="USA")
+    canada_df = pd.read_excel(file_path, sheet_name="Canada")
+    return market_rent_df, usa_df, canada_df
 
-market_rent_df, centres_df = load_global_pricing()
+market_rent_df, usa_df, canada_df = load_global_pricing()
 
-# --------------------- MARKET RENT CALCULATION ---------------------
+# --------------------- HELPER FUNCTIONS ---------------------
 def get_address_coords(address):
-    # Replace with actual geocoding if needed
+    # Replace with real geocoding if needed
     return (40.7357, -74.1724)  # Example: Newark, NJ
 
 def get_market_rent_from_address(address):
     addr_coords = get_address_coords(address)
-    centres_df["distance"] = centres_df.apply(lambda x: geodesic(addr_coords, (x["Latitude"], x["Longitude"])).miles, axis=1)
-    nearest_centres = centres_df.nsmallest(3, "distance")["Centre #"].tolist()
+    combined_df = pd.concat([usa_df, canada_df], ignore_index=True)
+    combined_df["distance"] = ((combined_df["Latitude"] - addr_coords[0])**2 +
+                               (combined_df["Longitude"] - addr_coords[1])**2)**0.5
+    nearest_centres = combined_df.nsmallest(3, "distance")["Centre #"].tolist()
     rent_values = market_rent_df[market_rent_df["Centre #"].isin(nearest_centres)]["Market Rate"].tolist()
     if rent_values:
         return sum(rent_values) / len(rent_values)
     return 50.0  # fallback
 
-# --------------------- PDF EXTRACTION ---------------------
 def extract_gross_area_from_pdf(pdf_file):
     with pdfplumber.open(pdf_file) as pdf:
         for page in pdf.pages:
@@ -175,7 +175,7 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
             payroll = 110000
     else:
         payroll = extracted_payroll
-        fte = round(payroll / 55000,1)  # example FTE calculation
+        fte = round(payroll / 55000,1)
 
     # Rental / turnover
     rental_estimate = extracted_rental if extracted_rental is not None else sqft * market_rent
@@ -202,7 +202,6 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
     try:
         doc = Document("Insurance Template.docx")
 
-        # Replace "All values are in and sq ft." line
         for paragraph in doc.paragraphs:
             if "All values are in" in paragraph.text:
                 paragraph.text = f"Please see the answers in blue below. All values are in {currency} and sq ft."
@@ -218,7 +217,7 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
             if "Number of employees will be employed" in paragraph.text:
                 paragraph.add_run(f" {fte}").font.color.rgb = RGBColor(0,0,255)
 
-        # Fill table $ placeholders: turnover, gross profit, rental, payroll
+        # Fill table $ placeholders
         table_values = [annual_turnover, gross_profit_calc, rental_estimate, payroll]
         for table in doc.tables:
             val_idx = 0
@@ -226,13 +225,11 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
                 for cell in row.cells:
                     if "$" in cell.text and val_idx < len(table_values):
                         cell.text = f"{currency} {table_values[val_idx]:,.2f}"
-                        # make value blue
                         for paragraph in cell.paragraphs:
                             for run in paragraph.runs:
                                 run.font.color.rgb = RGBColor(0,0,255)
                         val_idx += 1
 
-        # Save Word doc to BytesIO
         output = BytesIO()
         doc.save(output)
         output.seek(0)
