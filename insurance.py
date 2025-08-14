@@ -6,6 +6,7 @@ import pandas as pd
 from docx import Document
 from docx.shared import RGBColor
 from io import BytesIO
+from datetime import datetime
 
 st.title("🏢 Insurance Report Generator")
 
@@ -33,17 +34,24 @@ st.markdown("---")
 st.subheader("📄 Upload Insurance Report PDF file")
 pdf_file = st.file_uploader("Upload PDF", type=["pdf"])
 
+st.markdown("---")
+st.subheader("📊 Upload Global Pricing Excel")
+pricing_file = st.file_uploader("Upload Global Pricing Excel", type=["xlsx"])
+
 DEFAULT_OCR = 0.20  # 20% fallback Occupancy Cost Ratio
 
 # --------------------- LOAD GLOBAL PRICING ---------------------
-@st.cache_data
-def load_global_pricing(file_path="Global Pricing.xlsx"):
-    market_rent_df = pd.read_excel(file_path, sheet_name="Market Rent")
-    usa_df = pd.read_excel(file_path, sheet_name="USA")
-    canada_df = pd.read_excel(file_path, sheet_name="Canada")
-    return market_rent_df, usa_df, canada_df
+if pricing_file is not None:
+    @st.cache_data
+    def load_global_pricing(uploaded_file):
+        market_rent_df = pd.read_excel(uploaded_file, sheet_name="Market Rent")
+        usa_df = pd.read_excel(uploaded_file, sheet_name="USA")
+        canada_df = pd.read_excel(uploaded_file, sheet_name="Canada")
+        return market_rent_df, usa_df, canada_df
 
-market_rent_df, usa_df, canada_df = load_global_pricing()
+    market_rent_df, usa_df, canada_df = load_global_pricing(pricing_file)
+else:
+    st.warning("Please upload the Global Pricing Excel file to calculate market rent.")
 
 # --------------------- HELPER FUNCTIONS ---------------------
 def get_address_coords(address):
@@ -51,6 +59,8 @@ def get_address_coords(address):
     return (40.7357, -74.1724)  # Example: Newark, NJ
 
 def get_market_rent_from_address(address):
+    if pricing_file is None:
+        return 50.0  # fallback if no pricing file uploaded
     addr_coords = get_address_coords(address)
     combined_df = pd.concat([usa_df, canada_df], ignore_index=True)
     combined_df["distance"] = ((combined_df["Latitude"] - addr_coords[0])**2 +
@@ -155,6 +165,8 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
 
     # Building age
     building_age = building_age_input if building_age_input > 0 else random.randint(20,50)
+    current_year = datetime.now().year
+    built_year = current_year - building_age
 
     # Floors
     num_floors = num_floors_input if num_floors_input > 0 else max(1, int(sqft // 10000))
@@ -186,7 +198,7 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
     st.subheader("🏗 Building Information")
     st.write(f"**Address:** {address}")
     st.write(f"**Multi-tenanted:** {multi_tenanted}")
-    st.write(f"**Approximate Age:** {building_age} years")
+    st.write(f"**Approximate Age:** {building_age} years (built in {built_year})")
     st.write(f"**Total Floors:** {num_floors}")
 
     st.subheader("Employment Estimate")
@@ -211,13 +223,13 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
             if "Is building multi- tenanted" in paragraph.text:
                 paragraph.add_run(f" {multi_tenanted}").font.color.rgb = RGBColor(0,0,255)
             if "Approximate age of the building" in paragraph.text:
-                paragraph.add_run(f" {building_age} years").font.color.rgb = RGBColor(0,0,255)
+                paragraph.add_run(f" {building_age} years (built in {built_year})").font.color.rgb = RGBColor(0,0,255)
             if "Total number of floors" in paragraph.text:
                 paragraph.add_run(f" {num_floors}").font.color.rgb = RGBColor(0,0,255)
             if "Number of employees will be employed" in paragraph.text:
                 paragraph.add_run(f" {fte}").font.color.rgb = RGBColor(0,0,255)
 
-        # Fill table $ placeholders
+        # Fill table $ placeholders: turnover, gross profit, rental, payroll
         table_values = [annual_turnover, gross_profit_calc, rental_estimate, payroll]
         for table in doc.tables:
             val_idx = 0
@@ -230,6 +242,7 @@ if st.button("Generate Report") and address and sqft > 0 and market_rent > 0:
                                 run.font.color.rgb = RGBColor(0,0,255)
                         val_idx += 1
 
+        # Save Word doc to BytesIO
         output = BytesIO()
         doc.save(output)
         output.seek(0)
