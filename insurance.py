@@ -25,7 +25,7 @@ currency = st.selectbox("Currency", ["CAD", "USD"])
 sqft = st.number_input("Building Square Footage", min_value=0.0, value=20000.0)
 
 st.markdown("---")
-st.subheader("Optional manual overrides (if OSM data is missing or unavailable)")
+st.subheader("Optional manual overrides (if data is missing or unavailable)")
 multi_tenanted_input = st.selectbox("Is the building multi-tenanted?", ["Unknown", "Yes", "No"], index=0)
 building_age_input = st.number_input("Approximate Building Age (years)", min_value=0, max_value=200, value=0)
 num_floors_input = st.number_input("Total Floors (excl. basement)", min_value=0, max_value=100, value=0)
